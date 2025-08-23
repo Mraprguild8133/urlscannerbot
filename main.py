@@ -217,6 +217,11 @@ class TelegramSecurityBot:
             self.logger.info("🔐 Telegram Security Bot starting up...")
             self.logger.info(f"🆔 Bot username: @{self.bot.get_me().username}")
             self.logger.info(f"🌐 Server binding to port 8000")
+
+          # Start web interface in a separate thread
+            web_thread = threading.Thread(target=self._start_web_interface, daemon=True)
+            web_thread.start()
+            self.logger.info("🌐 Web interface thread started")
             
             # Start the bot
             self.start_polling()
