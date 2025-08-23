@@ -14,12 +14,9 @@ RUN apt-get update && apt-get install -y \
     g++ \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies
-RUN pip install --no-cache-dir \
-    pytelegrambotapi==4.28.0 \
-    requests==2.32.5 \
-    urllib3==2.5.0 \
-    pyTelegramBotAPI=4.28.0
+# Copy requirements and install Python dependencies
+COPY pyproject.toml ./
+RUN pip install --no-cache-dir .
 
 # Copy application code
 COPY . .
