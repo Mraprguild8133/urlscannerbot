@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - Telegram Security Bot{% endblock %}
+
+{% block content %}
+<div class="card">
+    <h2>🔍 Service Status Overview</h2>
+    <button onclick="refreshStatus()" class="btn refresh-btn">🔄 Refresh</button>
+    <p>Monitor the connection status of all integrated security services</p>
+</div>
+
+<div class="status-grid">
+    <div class="status-card">
+        <div class="status-header">
+            <div id="telegram-indicator" class="status-indicator status-{{ status.telegram.status.replace('_', '-') }}"></div>
+            <h3>📱 Telegram Bot API</h3>
+        </div>
+        <p id="telegram-message">{{ status.telegram.message }}</p>
+        {% if status.telegram.details %}
+        <div style="margin-top: 10px; font-size: 0.9em; color: #666;">
+            <strong>Bot Info:</strong><br>
+            • Username: @{{ status.telegram.details.username }}<br>
+            • Name: {{ status.telegram.details.first_name }}<br>
+            • ID: {{ status.telegram.details.id }}
+        </div>
+        {% endif %}
+        <div style="margin-top: 15px;">
+            {% if status.telegram.status == 'connected' %}
+                <span class="btn btn-success">✅ Connected</span>
+            {% elif status.telegram.status == 'error' %}
+                <span class="btn btn-danger">❌ Error</span>
+            {% else %}
+                <span class="btn btn-warning">⚠️ Not Configured</span>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="status-card">
+        <div class="status-header">
+            <div id="urlscan-indicator" class="status-indicator status-{{ status.urlscan.status.replace('_', '-') }}"></div>
+            <h3>🔍 URLScan.io API</h3>
+        </div>
+        <p id="urlscan-message">{{ status.urlscan.message }}</p>
+        {% if status.urlscan.details %}
+        <div style="margin-top: 10px; font-size: 0.9em; color: #666;">
+            <strong>Quota Info:</strong><br>
+            {% for key, value in status.urlscan.details.items() %}
+            • {{ key|title }}: {{ value }}<br>
+            {% endfor %}
+        </div>
+        {% endif %}
+        <div style="margin-top: 15px;">
+            {% if status.urlscan.status == 'connected' %}
+                <span class="btn btn-success">✅ Connected</span>
+            {% elif status.urlscan.status == 'error' %}
+                <span class="btn btn-danger">❌ Error</span>
+            {% elif status.urlscan.status == 'not_configured' %}
+                <span class="btn btn-warning">⚠️ Not Configured</span>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="status-card">
+        <div class="status-header">
+            <div id="cloudflare-indicator" class="status-indicator status-{{ status.cloudflare.status.replace('_', '-') }}"></div>
+            <h3>☁️ Cloudflare Radar API</h3>
+        </div>
+        <p id="cloudflare-message">{{ status.cloudflare.message }}</p>
+        <div style="margin-top: 15px;">
+            {% if status.cloudflare.status == 'connected' %}
+                <span class="btn btn-success">✅ Connected</span>
+            {% elif status.cloudflare.status == 'error' %}
+                <span class="btn btn-danger">❌ Error</span>
+            {% elif status.cloudflare.status == 'not_configured' %}
+                <span class="btn btn-warning">⚠️ Not Configured</span>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<div class="card">
+    <h3>🚀 Quick Actions</h3>
+    <div style="display: flex; gap: 15px; flex-wrap: wrap; margin-top: 15px;">
+        <a href="{{ url_for('config_page') }}" class="btn">⚙️ Configure API Keys</a>
+        <a href="/api/status" target="_blank" class="btn">📊 JSON Status</a>
+        <a href="{{ url_for('documentation') }}" class="btn">📖 Documentation</a>
+        <a href="/health" target="_blank" class="btn btn-success">💚 Health Check</a>
+    </div>
+</div>
+
+<div class="card">
+    <h3>📊 System Information</h3>
+    <div style="margin-top: 15px;">
+        <p><strong>Environment:</strong> Production</p>
+        <p><strong>Last Status Check:</strong> <span id="timestamp">{{ status.timestamp }}</span></p>
+        <p><strong>Web Interface Port:</strong> {{ request.environ.get('SERVER_PORT', 'Unknown') }}</p>
+        <p><strong>Auto-refresh:</strong> Every 30 seconds</p>
+    </div>
+</div>
+{% endblock %}
