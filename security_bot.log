@@ -1,0 +1,36 @@
+2025-08-23 12:37:24 | utils.rate_limiter | INFO | Added rate limiter for urlscan: 10/60s
+2025-08-23 12:37:24 | utils.rate_limiter | INFO | Added rate limiter for cloudflare: 100/60s
+2025-08-23 12:37:24 | utils.rate_limiter | INFO | Added rate limiter for telegram: 30/1s
+2025-08-23 12:37:24 | database | INFO | 📁 Database initialized: security_bot.db
+2025-08-23 12:37:24 | services.url_scanner | INFO | 🔍 URLScan.io service initialized (API key: ✓)
+2025-08-23 12:37:24 | services.cloudflare_radar | INFO | ☁️ Cloudflare Radar service initialized (API key: ✓)
+2025-08-23 12:37:24 | services.admin_manager | INFO | 👥 Admin manager initialized
+2025-08-23 12:37:24 | utils.url_detector | INFO | 🔗 URL detector initialized
+2025-08-23 12:37:24 | services.threat_analyzer | INFO | 🛡️ Threat analyzer initialized
+2025-08-23 12:37:24 | utils.url_detector | INFO | 🔗 URL detector initialized
+2025-08-23 12:37:24 | handlers.message_handler | INFO | 💬 Message handler initialized
+2025-08-23 12:37:24 | handlers.admin_handler | INFO | 👨‍💼 Admin handler initialized
+2025-08-23 12:37:24 | __main__ | ERROR | Failed to start bot: Middleware is not enabled. Use apihelper.ENABLE_MIDDLEWARE before initialising TeleBot.
+2025-08-23 12:37:43 | utils.rate_limiter | INFO | Added rate limiter for urlscan: 10/60s
+2025-08-23 12:37:43 | utils.rate_limiter | INFO | Added rate limiter for cloudflare: 100/60s
+2025-08-23 12:37:43 | utils.rate_limiter | INFO | Added rate limiter for telegram: 30/1s
+2025-08-23 12:37:43 | database | INFO | 📁 Database initialized: security_bot.db
+2025-08-23 12:37:43 | services.url_scanner | INFO | 🔍 URLScan.io service initialized (API key: ✓)
+2025-08-23 12:37:43 | services.cloudflare_radar | INFO | ☁️ Cloudflare Radar service initialized (API key: ✓)
+2025-08-23 12:37:43 | services.admin_manager | INFO | 👥 Admin manager initialized
+2025-08-23 12:37:43 | utils.url_detector | INFO | 🔗 URL detector initialized
+2025-08-23 12:37:43 | services.threat_analyzer | INFO | 🛡️ Threat analyzer initialized
+2025-08-23 12:37:43 | utils.url_detector | INFO | 🔗 URL detector initialized
+2025-08-23 12:37:43 | handlers.message_handler | INFO | 💬 Message handler initialized
+2025-08-23 12:37:43 | handlers.admin_handler | INFO | 👨‍💼 Admin handler initialized
+2025-08-23 12:37:43 | __main__ | INFO | 🤖 Telegram Security Bot initialized successfully
+2025-08-23 12:37:43 | __main__ | INFO | 🔐 Telegram Security Bot starting up...
+2025-08-23 12:37:44 | __main__ | INFO | 🆔 Bot username: @aprurlscannerbot
+2025-08-23 12:37:44 | __main__ | INFO | 🌐 Server binding to port 8000
+2025-08-23 12:37:44 | __main__ | INFO | 🚀 Starting bot polling (attempt 1/5)
+2025-08-23 12:42:44 | __main__ | INFO | 🟢 Bot health check passed
+2025-08-23 12:46:02 | handlers.message_handler | INFO | 👤 User 6300568870 (@Sathishkumar33) in chat 6300568870 | Started bot
+2025-08-23 12:46:43 | handlers.message_handler | INFO | 👤 User 6300568870 (@Sathishkumar33) in chat -1002361103285 | Started bot
+2025-08-23 12:46:51 | handlers.admin_handler | WARNING | 👨‍💼 Admin 6300568870 (@Sathishkumar33) in chat -1002361103285 | Opened admin panel
+2025-08-23 12:47:01 | handlers.message_handler | INFO | 👤 User 6300568870 (@Sathishkumar33) in chat -1002361103285 | Requested stats
+2025-08-23 12:47:44 | __main__ | INFO | 🟢 Bot health check passed
