@@ -9,6 +9,7 @@ import sys
 import time
 import signal
 import threading
+import templates
 from typing import Optional
 
 import telebot
