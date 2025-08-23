@@ -16,9 +16,10 @@ RUN apt-get update && apt-get install -y \
 
 # Install Python dependencies
 RUN pip install --no-cache-dir \
-    python-telegram-bot==20.8 \
-    flask==3.1.2 \
-    aiofiles
+    pytelegrambotapi==4.28.0 \
+    requests==2.32.5 \
+    urllib3==2.5.0 \
+    pyTelegramBotAPI==4.14.0
 
 # Copy application code
 COPY . .
