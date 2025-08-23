@@ -19,7 +19,7 @@ RUN pip install --no-cache-dir \
     pytelegrambotapi==4.28.0 \
     requests==2.32.5 \
     urllib3==2.5.0 \
-    pyTelegramBotAPI==4.14.0
+    pyTelegramBotAPI=4.28.0
 
 # Copy application code
 COPY . .
