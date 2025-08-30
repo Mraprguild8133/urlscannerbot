@@ -270,28 +270,28 @@ def create_flask_app():
     def index():
         return render_template("base.html")
 
-    @app.route("/health")     
+    @app.route("/health")
     def health_check():
-    try:
-        if bot_instance and bot_instance.is_running():
+        try:
+            if bot_instance and bot_instance.is_running():
+                return {
+                    "status": "healthy",
+                    "bot": "running",
+                    "last_check": time.strftime("%Y-%m-%d %H:%M:%S"),
+                    "threads": threading.active_count(),
+                    "database": "connected" if bot_instance.db.is_connected() else "error",
+                    "api_keys": "✅ Loaded" if bot_instance.config.URLSCAN_API_KEY and bot_instance.config.CLOUDFLARE_API_KEY else "⚠️ Missing"
+                }, 200
             return {
-                "status": "healthy",
-                "bot": "running",
+                "status": "unhealthy",
+                "bot": "stopped",
                 "last_check": time.strftime("%Y-%m-%d %H:%M:%S"),
                 "threads": threading.active_count(),
-                "database": "connected" if bot_instance.db.is_connected() else "error",
-                "api_keys": "✅ Loaded" if bot_instance.config.URLSCAN_API_KEY and bot_instance.config.CLOUDFLARE_API_KEY else "⚠️ Missing"
-            }, 200
-        return {
-            "status": "unhealthy",
-            "bot": "stopped",
-            "last_check": time.strftime("%Y-%m-%d %H:%M:%S"),
-            "threads": threading.active_count(),
-            "database": "error",
-            "api_keys": "⚠️ Missing"
-        }, 503
-    except Exception as e:
-        return {"status": "error", "message": str(e)}, 500
+                "database": "error",
+                "api_keys": "⚠️ Missing"
+            }, 503
+        except Exception as e:
+            return {"status": "error", "message": str(e)}, 500
         
     @app.route("/start_bot")
     def start_bot():
