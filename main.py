@@ -270,30 +270,54 @@ def create_flask_app():
     @app.route("/")
     def index():
         return render_template("base.html")
-    
-    @app.route("/health")
+        
+@app.route("/health")
 def health_check():
     try:
-        if bot_instance and bot_instance.is_running():
+        if not bot_instance:
             return {
-                "status": "healthy",
-                "bot": "running",
+                "status": "unhealthy",
+                "bot": "not initialized",
                 "last_check": time.strftime("%Y-%m-%d %H:%M:%S"),
                 "threads": threading.active_count(),
-                "Database": "connected" if bot_instance.db.is_connected() else "error",
-                "api_keys": "✅ Loaded" if bot_instance.config.URLSCAN_API_KEY and bot_instance.config.CLOUDFLARE_API_KEY else "⚠️ Missing"
-            }, 200
+                "database": "unknown",
+                "api_keys": "⚠️ Missing"
+            }, 503
+
+        # Bot running status
+        bot_running = bot_instance.is_running()
+
+        # Database connection check (safe)
+        db_status = "unknown"
+        try:
+            if hasattr(bot_instance, "db") and bot_instance.db:
+                if hasattr(bot_instance.db, "is_connected"):
+                    db_status = "connected" if bot_instance.db.is_connected() else "error"
+                else:
+                    db_status = "ok"   # fallback if no .is_connected()
+        except Exception:
+            db_status = "error"
+
+        # API key check
+        api_status = "⚠️ Missing"
+        try:
+            if bot_instance.config.URLSCAN_API_KEY and bot_instance.config.CLOUDFLARE_API_KEY:
+                api_status = "✅ Loaded"
+        except Exception:
+            api_status = "⚠️ Missing"
+
         return {
-            "status": "unhealthy",
-            "bot": "stopped",
+            "status": "healthy" if bot_running else "unhealthy",
+            "bot": "running" if bot_running else "stopped",
             "last_check": time.strftime("%Y-%m-%d %H:%M:%S"),
             "threads": threading.active_count(),
-            "Database": "error",
-            "api_keys": "⚠️ Missing"
-        }, 503
+            "database": db_status,
+            "api_keys": api_status
+        }, 200 if bot_running else 503
+
     except Exception as e:
         return {"status": "error", "message": str(e)}, 500
-    
+        
     @app.route("/start_bot")
     def start_bot():
         if not bot_instance:
