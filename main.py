@@ -255,57 +255,64 @@ class TelegramSecurityBot:
         return self.running and self.polling_thread and self.polling_thread.is_alive()
 
 
+# Global bot instance
+bot_instance = None
+
 def create_flask_app():
     """Create and configure Flask application"""
     app = Flask(__name__, template_folder="templates")
     
-    # Try to get bot instance
-    bot_instance = None
-    try:
-        bot_instance = TelegramSecurityBot()
-    except Exception as e:
-        print(f"Could not initialize bot: {e}")
-    
     @app.route("/")
     def index():
-        return render_template("base.html")
-
+        return render_template("index.html", bot_running=bot_instance.is_running() if bot_instance else False)
+    
     @app.route("/health")
     def health_check():
         try:
-            if bot_instance and bot_instance.is_running():
+            if not bot_instance:
                 return {
-                    "status": "healthy",
-                    "bot": "running",
+                    "status": "unhealthy",
+                    "bot": "not initialized",
                     "last_check": time.strftime("%Y-%m-%d %H:%M:%S"),
                     "threads": threading.active_count(),
-                    "database": "connected" if bot_instance.db.is_connected() else "error",
-                    "api_keys": "✅ Loaded" if bot_instance.config.URLSCAN_API_KEY and bot_instance.config.CLOUDFLARE_API_KEY else "⚠️ Missing"
-                }, 200
+                    "database": "unknown",
+                    "api_keys": "⚠️ Missing"
+                }, 503
+
+            # Bot running status
+            bot_running = bot_instance.is_running()
+
+            # Database connection check (safe)
+            db_status = "unknown"
+            try:
+                if hasattr(bot_instance, "db") and bot_instance.db:
+                    if hasattr(bot_instance.db, "is_connected"):
+                        db_status = "connected" if bot_instance.db.is_connected() else "error"
+                    else:
+                        db_status = "ok"   # fallback if no .is_connected()
+            except Exception:
+                db_status = "error"
+
+            # API key check
+            api_status = "⚠️ Missing"
+            try:
+                if bot_instance.config.URLSCAN_API_KEY and bot_instance.config.CLOUDFLARE_API_KEY:
+                    api_status = "✅ Loaded"
+            except Exception:
+                api_status = "⚠️ Missing"
+
             return {
-                "status": "unhealthy",
-                "bot": "stopped",
+                "status": "healthy" if bot_running else "unhealthy",
+                "bot": "running" if bot_running else "stopped",
                 "last_check": time.strftime("%Y-%m-%d %H:%M:%S"),
                 "threads": threading.active_count(),
-                "database": "error",
-                "api_keys": "⚠️ Missing"
-            }, 503
+                "database": db_status,
+                "api_keys": api_status
+            }, 200 if bot_running else 503
+
         except Exception as e:
             return {"status": "error", "message": str(e)}, 500
-        
-    @app.route("/start_bot")
-    def start_bot():
-        if not bot_instance:
-            return {"status": "error", "message": "Bot not initialized"}, 500
-            
-        if bot_instance.is_running():
-            return {"status": "already_running", "message": "Bot is already running"}, 200
-            
-        if bot_instance.start():
-            return {"status": "started", "message": "Bot started successfully"}, 200
-        else:
-            return {"status": "error", "message": "Failed to start bot"}, 500
-    
+
     @app.route("/stop_bot")
     def stop_bot():
         if not bot_instance:
@@ -319,14 +326,15 @@ def create_flask_app():
 
 def main():
     """Main entry point"""
+    global bot_instance
     logger = setup_logger(__name__)
     
     try:
         # Initialize the bot (but don't start it yet)
-        bot = TelegramSecurityBot()
+        bot_instance = TelegramSecurityBot()
         
         # Start the bot
-        if not bot.start():
+        if not bot_instance.start():
             logger.error("Failed to start bot. Exiting.")
             return 1
         
