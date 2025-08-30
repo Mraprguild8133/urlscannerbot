@@ -103,9 +103,9 @@ class WebInterface:
                     login_user(user)
                     return redirect(url_for('index'))
                 
-                return render_template('login.html', error='Invalid credentials')
+                return render_template('docs.html', error='Invalid credentials')
             
-            return render_template('login.html')
+            return render_template('docs.html')
         
         @self.app.route('/logout')
         @login_required
@@ -212,10 +212,10 @@ class WebInterface:
                 self.logger.error(f"Error fetching user stats: {e}")
                 return jsonify({'error': str(e)}), 500
         
-        @self.app.route('/settings')
+        @self.app.route('/config')
         @login_required
         def settings():
-            return render_template('settings.html')
+            return render_template('config.html')
         
         @self.app.route('/api/settings', methods=['GET', 'PUT'])
         @login_required
