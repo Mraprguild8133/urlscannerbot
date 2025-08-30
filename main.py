@@ -11,7 +11,6 @@ import signal
 import threading
 import atexit
 from typing import Optional
-from Database import Database 
 import telebot
 from telebot import apihelper
 from telebot.types import Message, CallbackQuery
