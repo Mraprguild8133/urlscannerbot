@@ -270,8 +270,8 @@ def create_flask_app():
     def index():
         return render_template("base.html")
 
-    @app.route("/health")
-def health_check():
+    @app.route("/health")     
+    def health_check():
     try:
         if bot_instance and bot_instance.is_running():
             return {
