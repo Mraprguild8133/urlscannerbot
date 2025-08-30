@@ -10,6 +10,7 @@ import time
 import signal
 import threading
 import atexit
+import requests
 from typing import Optional
 import telebot
 from telebot import apihelper
@@ -176,6 +177,61 @@ class TelegramSecurityBot:
                 # Don't try to restart automatically to avoid conflicts
                 # Just log the error and continue
 
+    def _check_existing_bot_instance(self):
+        """Check if another bot instance is already running"""
+        try:
+            # Try to get bot info - if this works, the bot token is valid
+            bot_info = self.bot.get_me()
+            self.logger.info(f"Bot info: {bot_info.username} (ID: {bot_info.id})")
+            
+            # Try to get updates - if this fails with 409, another instance is running
+            response = requests.get(
+                f"https://api.telegram.org/bot{self.config.TELEGRAM_BOT_TOKEN}/getUpdates",
+                timeout=10
+            )
+            
+            if response.status_code == 409:
+                self.logger.warning("Another bot instance is already running")
+                return True
+                
+            return False
+            
+        except requests.exceptions.RequestException as e:
+            self.logger.error(f"Network error checking for existing bot instance: {e}")
+            return False
+        except Exception as e:
+            self.logger.error(f"Error checking for existing bot instance: {e}")
+            return False
+
+    def _stop_other_bot_instance(self):
+        """Try to stop other bot instance by closing its webhook"""
+        try:
+            # Try to close webhook (if the other instance is using webhooks)
+            response = requests.get(
+                f"https://api.telegram.org/bot{self.config.TELEGRAM_BOT_TOKEN}/close",
+                timeout=10
+            )
+            
+            if response.status_code == 200:
+                self.logger.info("Successfully closed webhook of other bot instance")
+                return True
+                
+            # Try to delete webhook
+            response = requests.get(
+                f"https://api.telegram.org/bot{self.config.TELEGRAM_BOT_TOKEN}/deleteWebhook",
+                timeout=10
+            )
+            
+            if response.status_code == 200:
+                self.logger.info("Successfully deleted webhook of other bot instance")
+                return True
+                
+            return False
+            
+        except Exception as e:
+            self.logger.error(f"Error stopping other bot instance: {e}")
+            return False
+
     # ---------------- POLLING ----------------
     def _polling_worker(self):
         """Worker thread for bot polling"""
@@ -188,12 +244,6 @@ class TelegramSecurityBot:
                     break
                     
                 self.logger.info(f"🚀 Starting bot polling (attempt {attempt+1}/{max_retries})")
-                
-                # First, try to stop any existing polling to avoid conflicts
-                try:
-                    self.bot.stop_polling()
-                except:
-                    pass
                 
                 # Start polling with a specific allowed_update
                 self.bot.infinity_polling(
@@ -209,8 +259,15 @@ class TelegramSecurityBot:
                 self.logger.error(f"Polling attempt {attempt+1} failed: {e}")
                 if "Conflict: terminated by other getUpdates request" in str(e):
                     self.logger.error("Another bot instance is running. Please stop it first.")
-                    # Don't retry if it's a conflict error
-                    break
+                    
+                    # Try to stop the other instance
+                    if self._stop_other_bot_instance():
+                        self.logger.info("Other instance stopped. Retrying...")
+                        time.sleep(5)  # Wait a bit before retrying
+                        continue
+                    else:
+                        self.logger.error("Could not stop other bot instance. Please stop it manually.")
+                        break
                 elif attempt < max_retries - 1 and self.running:
                     self.logger.info(f"Retrying in {retry_delay} seconds...")
                     time.sleep(retry_delay)
@@ -227,6 +284,14 @@ class TelegramSecurityBot:
             return False
             
         try:
+            # Check if another bot instance is already running
+            if self._check_existing_bot_instance():
+                self.logger.warning("Another bot instance is already running. Trying to stop it...")
+                if not self._stop_other_bot_instance():
+                    self.logger.error("Could not stop other bot instance. Please stop it manually.")
+                    return False
+                time.sleep(3)  # Wait a bit after stopping the other instance
+            
             # Check if bot can connect to Telegram API
             self.bot.get_me()
             
@@ -367,6 +432,20 @@ def create_flask_app():
         else:
             return jsonify({"status": "error", "message": "Failed to start bot"}), 500
     
+    @app.route("/kill_other_instances", methods=["POST"])
+    def kill_other_instances():
+        if not bot_instance:
+            return jsonify({"status": "error", "message": "Bot not initialized"}), 500
+            
+        try:
+            # Try to stop other instances
+            if bot_instance._stop_other_bot_instance():
+                return jsonify({"status": "success", "message": "Other instances stopped"}), 200
+            else:
+                return jsonify({"status": "error", "message": "Could not stop other instances"}), 500
+        except Exception as e:
+            return jsonify({"status": "error", "message": str(e)}), 500
+    
     return app
 
 
@@ -381,9 +460,9 @@ def main():
         
         # Start the bot
         if not bot_instance.start():
-            logger.error("Failed to start bot. Exiting.")
-            return 1
-        
+            logger.error("Failed to start bot. You may need to stop other instances manually.")
+            logger.error("Use the /kill_other_instances endpoint or wait a few minutes before retrying.")
+            
         # Create and run Flask app
         app = create_flask_app()
         port = int(os.getenv("PORT", 5000))
@@ -396,6 +475,7 @@ def main():
         return 1
     
     return 0
+
 
 if __name__ == "__main__":
     sys.exit(main())
