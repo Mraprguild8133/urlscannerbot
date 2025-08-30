@@ -1,359 +1,256 @@
 #!/usr/bin/env python3
 """
-Telegram Security Bot - Web Interface
-Provides a web dashboard for monitoring and managing the security bot
+Telegram Security Bot - Main Entry Point
+Real-time URL threat analysis using URLScan.io and Cloudflare Radar APIs
 """
 
-from flask import Flask, render_template, jsonify, request, session, redirect, url_for
-from flask_login import LoginManager, UserMixin, login_required, login_user, logout_user, current_user
-import sqlite3
-import json
 import os
-from datetime import datetime, timedelta
-from functools import wraps
-import threading
+import sys
 import time
+import signal
+import threading
+from typing import Optional
 
-# Import your existing modules
-try:
-    from config import Config
-    from database import Database
-    from utils.logger import setup_logger
-except ImportError:
-    # Fallback for standalone operation
-    import sys
-    sys.path.append('..')
-    from config import Config
-    from database import Database
-    from utils.logger import setup_logger
+import telebot
+from telebot import apihelper
+from telebot.types import Message, CallbackQuery
+
+# Enable middleware for the bot
+apihelper.ENABLE_MIDDLEWARE = True
+
+from config import Config
+from database import Database
+from utils.logger import setup_logger
+from handlers.message_handler import MessageHandler
+from handlers.admin_handler import AdminHandler
+from services.url_scanner import URLScanner
+from services.cloudflare_radar import CloudflareRadar
+from services.admin_manager import AdminManager
+from services.threat_analyzer import ThreatAnalyzer
 
 
-class WebInterface:
-    """Web interface for Telegram Security Bot"""
+class TelegramSecurityBot:
+    """Main bot class that orchestrates all components"""
     
     def __init__(self):
         self.logger = setup_logger(__name__)
         self.config = Config()
+        self.running = True
+        
+        # Initialize bot
+        self.bot = telebot.TeleBot(
+            self.config.TELEGRAM_BOT_TOKEN,
+            parse_mode='HTML',
+            threaded=True
+        )
+        
+        # Initialize database
         self.db = Database()
         
-        # Initialize Flask app
-        self.app = Flask(__name__, 
-                        template_folder='templates',
-                        static_folder='static')
+        # Initialize services
+        self.url_scanner = URLScanner(self.config.URLSCAN_API_KEY)
+        self.cloudflare_radar = CloudflareRadar(self.config.CLOUDFLARE_API_KEY)
+        self.admin_manager = AdminManager(self.db)
+        self.threat_analyzer = ThreatAnalyzer(self.url_scanner, self.cloudflare_radar, self.db)
         
-        # Configuration
-        self.app.secret_key = os.getenv('FLASK_SECRET_KEY', 'dev-secret-key-change-in-production')
-        self.app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(hours=24)
+        # Initialize handlers
+        self.message_handler = MessageHandler(self.bot, self.threat_analyzer, self.admin_manager, self.db)
+        self.admin_handler = AdminHandler(self.bot, self.admin_manager, self.db)
         
-        # Initialize login manager
-        self.login_manager = LoginManager()
-        self.login_manager.init_app(self.app)
-        self.login_manager.login_view = 'login'
+        # Setup bot handlers
+        self._setup_handlers()
         
-        # User class for authentication
-        class User(UserMixin):
-            def __init__(self, id, username, is_admin):
-                self.id = id
-                self.username = username
-                self.is_admin = is_admin
+        # Setup signal handlers for graceful shutdown
+        if sys.platform != "win32":
+            signal.signal(signal.SIGINT, self._signal_handler)
+            signal.signal(signal.SIGTERM, self._signal_handler)
         
-        self.User = User
+        self.logger.info("🤖 Telegram Security Bot initialized successfully")
+
+    # ---------------- BOT HANDLERS ----------------
+    def _setup_handlers(self):
+        """Setup all bot message and callback handlers"""
         
-        # Setup routes
-        self._setup_routes()
-        
-        # Background thread for updating stats
-        self._stats_cache = {}
-        self._last_update = 0
-        self._cache_lock = threading.Lock()
-        
-        # Start background thread for updating stats
-        self._running = True
-        self.update_thread = threading.Thread(target=self._update_stats_thread, daemon=True)
-        self.update_thread.start()
-        
-        self.logger.info("🌐 Web Interface initialized successfully")
-    
-    def _setup_routes(self):
-        """Setup all web routes"""
-        
-        @self.login_manager.user_loader
-        def load_user(user_id):
-            # In a real application, you would query your database for the user
-            # For simplicity, we'll use a hardcoded admin user
-            if user_id == 'admin':
-                return self.User('admin', 'admin', True)
-            return None
-        
-        @self.app.route('/')
-        def index():
-            if not current_user.is_authenticated:
-                return redirect(url_for('login'))
-            return render_template('dashboard.html')
-        
-        @self.app.route('/login', methods=['GET', 'POST'])
-        def login():
-            if request.method == 'POST':
-                username = request.form.get('username')
-                password = request.form.get('password')
-                
-                # Simple authentication - in production, use proper password hashing
-                if username == 'admin' and password == os.getenv('WEB_ADMIN_PASSWORD', 'admin'):
-                    user = self.User('admin', 'admin', True)
-                    login_user(user)
-                    return redirect(url_for('index'))
-                
-                return render_template('docs.html', error='Invalid credentials')
-            
-            return render_template('docs.html')
-        
-        @self.app.route('/logout')
-        @login_required
-        def logout():
-            logout_user()
-            return redirect(url_for('login'))
-        
-        @self.app.route('/api/stats')
-        @login_required
-        def api_stats():
-            with self._cache_lock:
-                # Return cached stats to avoid database queries on every request
-                return jsonify(self._stats_cache)
-        
-        @self.app.route('/api/recent-scans')
-        @login_required
-        def api_recent_scans():
-            limit = request.args.get('limit', 10, type=int)
+        # Command handlers
+        @self.bot.message_handler(commands=['start'])
+        def handle_start(message: Message):
+            self.message_handler.handle_start(message)
+
+        @self.bot.message_handler(commands=['help'])
+        def handle_help(message: Message):
+            self.message_handler.handle_help(message)
+
+        @self.bot.message_handler(commands=['scan'])
+        def handle_manual_scan(message: Message):
+            self.message_handler.handle_manual_scan(message)
+
+        @self.bot.message_handler(commands=['stats'])
+        def handle_stats(message: Message):
+            self.message_handler.handle_stats(message)
+
+        @self.bot.message_handler(commands=['settings'])
+        def handle_settings(message: Message):
+            self.message_handler.handle_settings(message)
+
+        # Admin commands
+        @self.bot.message_handler(commands=['admin'])
+        def handle_admin(message: Message):
+            self.admin_handler.handle_admin(message)
+
+        @self.bot.message_handler(commands=['addadmin'])
+        def handle_add_admin(message: Message):
+            self.admin_handler.handle_add_admin(message)
+
+        @self.bot.message_handler(commands=['removeadmin'])
+        def handle_remove_admin(message: Message):
+            self.admin_handler.handle_remove_admin(message)
+
+        @self.bot.message_handler(commands=['ban'])
+        def handle_ban(message: Message):
+            self.admin_handler.handle_ban(message)
+
+        @self.bot.message_handler(commands=['unban'])
+        def handle_unban(message: Message):
+            self.admin_handler.handle_unban(message)
+
+        @self.bot.message_handler(commands=['whitelist'])
+        def handle_whitelist(message: Message):
+            self.admin_handler.handle_whitelist(message)
+
+        @self.bot.message_handler(commands=['blacklist'])
+        def handle_blacklist(message: Message):
+            self.admin_handler.handle_blacklist(message)
+
+        @self.bot.message_handler(commands=['threshold'])
+        def handle_threshold(message: Message):
+            self.admin_handler.handle_threshold(message)
+
+        # Auto URL scanning for all text messages
+        @self.bot.message_handler(func=lambda message: True, content_types=['text'])
+        def handle_text(message: Message):
+            self.message_handler.handle_text_message(message)
+
+        # Callback query handlers
+        @self.bot.callback_query_handler(func=lambda call: True)
+        def handle_callback(call: CallbackQuery):
+            self.message_handler.handle_callback(call)
+
+    # ---------------- SIGNALS ----------------
+    def _signal_handler(self, signum, frame):
+        """Handle shutdown signals gracefully"""
+        self.logger.info(f"Received signal {signum}. Shutting down gracefully...")
+        self.running = False
+        self.bot.stop_polling()
+
+    # ---------------- HEALTH CHECK ----------------
+    def _health_check(self):
+        """Periodic health check and restart if needed"""
+        while self.running:
             try:
-                conn = sqlite3.connect(self.config.DATABASE_PATH)
-                cursor = conn.cursor()
-                
-                cursor.execute('''
-                    SELECT url, result, timestamp, user_id, chat_id 
-                    FROM scans 
-                    ORDER BY timestamp DESC 
-                    LIMIT ?
-                ''', (limit,))
-                
-                scans = []
-                for row in cursor.fetchall():
-                    scans.append({
-                        'url': row[0],
-                        'result': json.loads(row[1]) if row[1] else {},
-                        'timestamp': row[2],
-                        'user_id': row[3],
-                        'chat_id': row[4]
-                    })
-                
-                conn.close()
-                return jsonify({'scans': scans})
+                time.sleep(300)  # Check every 5 minutes
+                self.bot.get_me()
+                self.logger.info("🟢 Bot health check passed")
             except Exception as e:
-                self.logger.error(f"Error fetching recent scans: {e}")
-                return jsonify({'error': str(e)}), 500
+                self.logger.error(f"🔴 Bot health check failed: {e}")
+                if self.running:
+                    self.logger.info("Attempting to restart bot polling...")
+                    try:
+                        self.start_polling()
+                    except Exception as restart_error:
+                        self.logger.error(f"Failed to restart bot: {restart_error}")
+
+    # ---------------- POLLING ----------------
+    def start_polling(self):
+        """Start bot polling with error recovery"""
+        max_retries = 5
+        retry_delay = 10
         
-        @self.app.route('/api/top-threats')
-        @login_required
-        def api_top_threats():
-            limit = request.args.get('limit', 10, type=int)
+        for attempt in range(max_retries):
             try:
-                conn = sqlite3.connect(self.config.DATABASE_PATH)
-                cursor = conn.cursor()
+                self.logger.info(f"🚀 Starting bot polling (attempt {attempt+1}/{max_retries})")
                 
-                cursor.execute('''
-                    SELECT url, COUNT(*) as count 
-                    FROM scans 
-                    WHERE result LIKE '%"malicious": true%' 
-                    OR result LIKE '%"malicious": True%'
-                    OR result LIKE '%"malicious":1%'
-                    GROUP BY url 
-                    ORDER BY count DESC 
-                    LIMIT ?
-                ''', (limit,))
-                
-                threats = []
-                for row in cursor.fetchall():
-                    threats.append({
-                        'url': row[0],
-                        'count': row[1]
-                    })
-                
-                conn.close()
-                return jsonify({'threats': threats})
+                # Start polling
+                self.bot.infinity_polling(
+                    timeout=30,
+                    long_polling_timeout=30,
+                    skip_pending=True,
+                    none_stop=True,
+                    restart_on_change=True
+                )
+                break
             except Exception as e:
-                self.logger.error(f"Error fetching top threats: {e}")
-                return jsonify({'error': str(e)}), 500
-        
-        @self.app.route('/api/user-stats')
-        @login_required
-        def api_user_stats():
-            limit = request.args.get('limit', 10, type=int)
-            try:
-                conn = sqlite3.connect(self.config.DATABASE_PATH)
-                cursor = conn.cursor()
-                
-                cursor.execute('''
-                    SELECT user_id, COUNT(*) as scan_count 
-                    FROM scans 
-                    GROUP BY user_id 
-                    ORDER BY scan_count DESC 
-                    LIMIT ?
-                ''', (limit,))
-                
-                users = []
-                for row in cursor.fetchall():
-                    users.append({
-                        'user_id': row[0],
-                        'scan_count': row[1]
-                    })
-                
-                conn.close()
-                return jsonify({'users': users})
-            except Exception as e:
-                self.logger.error(f"Error fetching user stats: {e}")
-                return jsonify({'error': str(e)}), 500
-        
-        @self.app.route('/config')
-        @login_required
-        def settings():
-            return render_template('config.html')
-        
-        @self.app.route('/api/settings', methods=['GET', 'PUT'])
-        @login_required
-        def api_settings():
-            if request.method == 'GET':
-                try:
-                    # Get current settings from database
-                    conn = sqlite3.connect(self.config.DATABASE_PATH)
-                    cursor = conn.cursor()
-                    
-                    cursor.execute('SELECT name, value FROM settings')
-                    settings = {row[0]: row[1] for row in cursor.fetchall()}
-                    
-                    conn.close()
-                    return jsonify(settings)
-                except Exception as e:
-                    self.logger.error(f"Error fetching settings: {e}")
-                    return jsonify({'error': str(e)}), 500
-            
-            elif request.method == 'PUT':
-                try:
-                    data = request.get_json()
-                    conn = sqlite3.connect(self.config.DATABASE_PATH)
-                    cursor = conn.cursor()
-                    
-                    for key, value in data.items():
-                        cursor.execute('''
-                            INSERT OR REPLACE INTO settings (name, value) 
-                            VALUES (?, ?)
-                        ''', (key, str(value)))
-                    
-                    conn.commit()
-                    conn.close()
-                    
-                    self.logger.info(f"Settings updated: {data}")
-                    return jsonify({'status': 'success'})
-                except Exception as e:
-                    self.logger.error(f"Error updating settings: {e}")
-                    return jsonify({'error': str(e)}), 500
-    
-    def _update_stats(self):
-        """Update statistics cache"""
+                self.logger.error(f"Polling attempt {attempt+1} failed: {e}")
+                if attempt < max_retries - 1:
+                    self.logger.info(f"Retrying in {retry_delay} seconds...")
+                    time.sleep(retry_delay)
+                    retry_delay *= 2
+                else:
+                    self.logger.error("Max retries reached. Bot failed to start.")
+                    raise
+
+    def run(self):
+        """Main run method"""
         try:
-            conn = sqlite3.connect(self.config.DATABASE_PATH)
-            cursor = conn.cursor()
+            self.logger.info("🔐 Telegram Security Bot starting up...")
             
-            # Total scans
-            cursor.execute('SELECT COUNT(*) FROM scans')
-            total_scans = cursor.fetchone()[0]
+            # Start health check thread
+            health_thread = threading.Thread(target=self._health_check, daemon=True)
+            health_thread.start()
             
-            # Malicious scans
-            cursor.execute('''
-                SELECT COUNT(*) FROM scans 
-                WHERE result LIKE '%"malicious": true%' 
-                OR result LIKE '%"malicious": True%'
-                OR result LIKE '%"malicious":1%'
-            ''')
-            malicious_scans = cursor.fetchone()[0]
+            # Start bot polling
+            self.start_polling()
             
-            # Today's scans
-            cursor.execute('''
-                SELECT COUNT(*) FROM scans 
-                WHERE date(timestamp) = date('now')
-            ''')
-            today_scans = cursor.fetchone()[0]
-            
-            # Total users
-            cursor.execute('SELECT COUNT(DISTINCT user_id) FROM scans')
-            total_users = cursor.fetchone()[0]
-            
-            # Scan results breakdown
-            cursor.execute('''
-                SELECT 
-                    SUM(CASE WHEN result LIKE '%"malicious": true%' OR result LIKE '%"malicious": True%' OR result LIKE '%"malicious":1%' THEN 1 ELSE 0 END) as malicious,
-                    SUM(CASE WHEN result LIKE '%"malicious": false%' OR result LIKE '%"malicious": False%' OR result LIKE '%"malicious":0%' THEN 1 ELSE 0 END) as clean,
-                    SUM(CASE WHEN result IS NULL OR result = '' OR result LIKE '%error%' THEN 1 ELSE 0 END) as errors
-                FROM scans
-            ''')
-            breakdown = cursor.fetchone()
-            
-            conn.close()
-            
-            stats = {
-                'total_scans': total_scans,
-                'malicious_scans': malicious_scans,
-                'today_scans': today_scans,
-                'total_users': total_users,
-                'scan_breakdown': {
-                    'malicious': breakdown[0],
-                    'clean': breakdown[1],
-                    'errors': breakdown[2]
-                },
-                'last_updated': datetime.now().isoformat()
-            }
-            
-            with self._cache_lock:
-                self._stats_cache = stats
-                self._last_update = time.time()
-                
+        except KeyboardInterrupt:
+            self.logger.info("Bot stopped by user")
         except Exception as e:
-            self.logger.error(f"Error updating stats: {e}")
+            self.logger.error(f"Fatal error: {e}")
+            raise
+        finally:
+            self.running = False
+            self.db.close()
+            self.logger.info("🛑 Bot shutdown complete")
+
+
+def create_flask_app():
+    """Create and configure Flask application"""
+    from flask import Flask, render_template
     
-    def _update_stats_thread(self):
-        """Background thread to update statistics periodically"""
-        while self._running:
-            try:
-                self._update_stats()
-                time.sleep(60)  # Update every minute
-            except Exception as e:
-                self.logger.error(f"Error in stats update thread: {e}")
-                time.sleep(60)
+    app = Flask(__name__, template_folder="templates")
     
-    def run(self, host='0.0.0.0', port=5000, debug=False):
-        """Run the web interface"""
-        self.logger.info(f"🌐 Starting web interface on {host}:{port}")
-        self.app.run(host=host, port=port, debug=debug, use_reloader=False)
+    @app.route("/")
+    def index():
+        return render_template("base.html")
     
-    def stop(self):
-        """Stop the web interface"""
-        self._running = False
-        if self.update_thread.is_alive():
-            self.update_thread.join(timeout=5)
-        self.logger.info("Web interface stopped")
+    return app
 
 
 def main():
-    """Main entry point for the web interface"""
+    """Main entry point"""
     try:
-        web_interface = WebInterface()
-        web_interface.run(
-            host=os.getenv('WEB_HOST', '0.0.0.0'),
-            port=int(os.getenv('WEB_PORT', 5000)),
-            debug=os.getenv('WEB_DEBUG', 'false').lower() == 'true'
-        )
+        # Check if we should run the Flask web server
+        if os.environ.get('RUN_FLASK', 'false').lower() == 'true':
+            from waitress import serve
+            
+            # Create Flask app
+            app = create_flask_app()
+            
+            # Start Flask server in a separate thread
+            port = int(os.getenv("PORT", 5000))
+            flask_thread = threading.Thread(
+                target=lambda: serve(app, host="0.0.0.0", port=port),
+                daemon=True
+            )
+            flask_thread.start()
+            print(f"🌐 Flask server running on port {port}")
+        
+        # Start the bot
+        bot = TelegramSecurityBot()
+        bot.run()
+        
     except Exception as e:
         logger = setup_logger(__name__)
-        logger.error(f"Failed to start web interface: {e}")
-        raise
+        logger.error(f"Failed to start bot: {e}")
+        sys.exit(1)
 
 
 if __name__ == "__main__":
