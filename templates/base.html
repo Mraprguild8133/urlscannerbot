@@ -1,9 +1,109 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>Telegram Security Bot</title>
+    <meta charset="UTF-8">
+    <title>Telegram Security Bot - Dashboard</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+
+    <!-- Bootstrap -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+
+    <style>
+        body { background-color: #f4f6f9; }
+        .container { max-width: 900px; margin-top: 50px; }
+        .card { border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.08); }
+        .btn-custom { border-radius: 10px; font-weight: 500; }
+        .status-icon { font-size: 20px; }
+    </style>
 </head>
 <body>
-    <h1>✅ Bot is running!</h1>
+<div class="container">
+    <h1 class="text-center mb-4">🤖 Telegram Security Bot</h1>
+
+    <!-- Status Card -->
+    <div class="card p-4 mb-4">
+        <h4 class="mb-3">🔐 Bot Status</h4>
+        <ul class="list-group">
+            <li class="list-group-item d-flex justify-content-between align-items-center">
+                Bot Process
+                <span id="bot-status" class="badge bg-secondary">Loading...</span>
+            </li>
+            <li class="list-group-item d-flex justify-content-between align-items-center">
+                Health
+                <span id="health-status" class="badge bg-secondary">Checking...</span>
+            </li>
+            <li class="list-group-item d-flex justify-content-between align-items-center">
+                Last Health Check
+                <span id="last-check" class="text-muted">--</span>
+            </li>
+            <li class="list-group-item d-flex justify-content-between align-items-center">
+                Active Threads
+                <span id="thread-count" class="badge bg-info">--</span>
+            </li>
+            <li class="list-group-item d-flex justify-content-between align-items-center">
+                Database
+                <span id="db-status" class="badge bg-secondary">Checking...</span>
+            </li>
+            <li class="list-group-item d-flex justify-content-between align-items-center">
+                API Keys
+                <span id="api-status" class="badge bg-secondary">--</span>
+            </li>
+        </ul>
+    </div>
+
+    <!-- Controls -->
+    <div class="card p-4 text-center">
+        <h5>⚙️ Controls</h5>
+        <div class="d-flex justify-content-center gap-3 mt-3">
+            <button class="btn btn-success btn-custom" onclick="startBot()">Start Bot</button>
+            <button class="btn btn-danger btn-custom" onclick="stopBot()">Stop Bot</button>
+            <button class="btn btn-info btn-custom" onclick="checkStatus()">Refresh Status</button>
+            <a href="/stats" class="btn btn-warning btn-custom">View Stats</a>
+        </div>
+    </div>
+</div>
+
+<script>
+    async function checkStatus() {
+        try {
+            let res = await fetch("/health");
+            let data = await res.json();
+
+            document.getElementById("bot-status").innerText = data.bot === "running" ? "🟢 Running" : "🔴 Stopped";
+            document.getElementById("bot-status").className = data.bot === "running" ? "badge bg-success" : "badge bg-danger";
+
+            document.getElementById("health-status").innerText = data.status === "healthy" ? "🟢 Healthy" : "🔴 Unhealthy";
+            document.getElementById("health-status").className = data.status === "healthy" ? "badge bg-success" : "badge bg-danger";
+
+            document.getElementById("last-check").innerText = data.last_check || "--";
+            document.getElementById("thread-count").innerText = data.threads || "--";
+
+            document.getElementById("db-status").innerText = data.database === "connected" ? "🟢 Connected" : "🔴 Error";
+            document.getElementById("db-status").className = data.database === "connected" ? "badge bg-success" : "badge bg-danger";
+
+            document.getElementById("api-status").innerText = data.api_keys || "--";
+        } catch {
+            document.getElementById("bot-status").innerText = "⚠️ Error";
+            document.getElementById("health-status").innerText = "⚠️ Error";
+        }
+    }
+
+    async function startBot() {
+        let res = await fetch("/start_bot");
+        let data = await res.json();
+        alert(data.message);
+        checkStatus();
+    }
+
+    async function stopBot() {
+        let res = await fetch("/stop_bot");
+        let data = await res.json();
+        alert(data.message);
+        checkStatus();
+    }
+
+    // Run check on page load
+    window.onload = checkStatus;
+</script>
 </body>
 </html>
