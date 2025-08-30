@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+"""
+Telegram Security Bot - Main Entry Point
+Real-time URL threat analysis using URLScan.io and Cloudflare Radar APIs
+"""
+
 import os
 import sys
 import time
@@ -10,7 +15,7 @@ import telebot
 from telebot import apihelper
 from telebot.types import Message, CallbackQuery
 
-from flask import Flask, render_template  # ✅ Flask support
+from flask import Flask, render_template  # ✅ Added Flask support
 
 # Enable middleware for the bot
 apihelper.ENABLE_MIDDLEWARE = True
@@ -27,49 +32,47 @@ from services.threat_analyzer import ThreatAnalyzer
 
 
 class TelegramSecurityBot:
+    """Main bot class that orchestrates all components"""
+    
     def __init__(self):
         self.logger = setup_logger(__name__)
         self.config = Config()
         self.running = True
-
+        
         # Initialize bot
         self.bot = telebot.TeleBot(
             self.config.TELEGRAM_BOT_TOKEN,
             parse_mode='HTML',
             threaded=True
         )
-
+        
         # Initialize database
         self.db = Database()
-
+        
         # Initialize services
         self.url_scanner = URLScanner(self.config.URLSCAN_API_KEY)
         self.cloudflare_radar = CloudflareRadar(self.config.CLOUDFLARE_API_KEY)
         self.admin_manager = AdminManager(self.db)
-        self.threat_analyzer = ThreatAnalyzer(
-            self.url_scanner, self.cloudflare_radar, self.db
-        )
-
+        self.threat_analyzer = ThreatAnalyzer(self.url_scanner, self.cloudflare_radar, self.db)
+        
         # Initialize handlers
-        self.message_handler = MessageHandler(
-            self.bot, self.threat_analyzer, self.admin_manager, self.db
-        )
+        self.message_handler = MessageHandler(self.bot, self.threat_analyzer, self.admin_manager, self.db)
         self.admin_handler = AdminHandler(self.bot, self.admin_manager, self.db)
-
+        
         # Setup bot handlers
         self._setup_handlers()
-
+        
         # Setup signal handlers for graceful shutdown
         if sys.platform != "win32":
             signal.signal(signal.SIGINT, self._signal_handler)
             signal.signal(signal.SIGTERM, self._signal_handler)
-
+        
         self.logger.info("🤖 Telegram Security Bot initialized successfully")
 
     # ---------------- BOT HANDLERS ----------------
     def _setup_handlers(self):
         """Setup all bot message and callback handlers"""
-
+        
         # Command handlers
         @self.bot.message_handler(commands=['start'])
         def handle_start(message: Message):
@@ -163,11 +166,15 @@ class TelegramSecurityBot:
         """Start bot polling with error recovery"""
         max_retries = 5
         retry_delay = 10
-
+        
         for attempt in range(max_retries):
             try:
                 self.logger.info(f"🚀 Starting bot polling (attempt {attempt+1}/{max_retries})")
-
+                
+                # Start health check thread
+                health_thread = threading.Thread(target=self._health_check, daemon=True)
+                health_thread.start()
+                
                 # Start polling
                 self.bot.infinity_polling(
                     timeout=30,
@@ -185,36 +192,25 @@ class TelegramSecurityBot:
                 else:
                     self.logger.error("Max retries reached. Bot failed to start.")
                     raise
-                    class TelegramSecurityBot:
 
-    def __init__(self):
-        ...
-        self.logger.info("🤖 Telegram Security Bot initialized successfully")
-
-    # ---------------- RUN ----------------
     def run(self):
         """Main run method"""
         try:
             self.logger.info("🔐 Telegram Security Bot starting up...")
-            port = int(os.getenv("PORT", 5000))
-            self.logger.info(f"🌐 Server binding to port {port}")
+            self.logger.info(f"🌐 Server binding to port {os.getenv('PORT', 5000)}")
 
-            # Start bot thread
+            # Start bot in a separate thread
             bot_thread = threading.Thread(target=self.start_polling, daemon=True)
             bot_thread.start()
 
-            # Start health check thread once
-            health_thread = threading.Thread(target=self._health_check, daemon=True)
-            health_thread.start()
-
-            # Flask app
+            # Start Flask web server
             app = Flask(__name__, template_folder="templates")
 
-            @app.route("/", methods=["GET", "HEAD"])
+            @app.route("/")
             def index():
                 return render_template("base.html")
 
-            app.run(host="0.0.0.0", port=port, debug=False)
+            app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)), debug=False)
 
         except KeyboardInterrupt:
             self.logger.info("Bot stopped by user")
@@ -225,16 +221,18 @@ class TelegramSecurityBot:
             self.running = False
             self.db.close()
             self.logger.info("🛑 Bot shutdown complete")
-        
+
+
 def main():
     """Main entry point"""
     try:
         bot = TelegramSecurityBot()
-        bot.run()   # ✅ now works
+        bot.run()
     except Exception as e:
-        logger = setup_logger("main")
+        logger = setup_logger(__name__)
         logger.error(f"Failed to start bot: {e}")
         sys.exit(1)
+
 
 if __name__ == "__main__":
     main()
