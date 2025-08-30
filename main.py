@@ -192,52 +192,57 @@ class TelegramSecurityBot:
                 else:
                     self.logger.error("Max retries reached. Bot failed to start.")
                     raise
-def run(self):
-    """Main run method"""
-    try:
-        self.logger.info("🔐 Telegram Security Bot starting up...")
-        port = int(os.getenv("PORT", 5000))
-        self.logger.info(f"🌐 Server binding to port {port}")
+                    class TelegramSecurityBot:
+    """Main bot class that orchestrates all components"""
 
-        # Start bot thread
-        bot_thread = threading.Thread(target=self.start_polling, daemon=True)
-        bot_thread.start()
+    def __init__(self):
+        ...
+        self.logger.info("🤖 Telegram Security Bot initialized successfully")
 
-        # Start health check thread
-        health_thread = threading.Thread(target=self._health_check, daemon=True)
-        health_thread.start()
+    # ---------------- RUN ----------------
+    def run(self):
+        """Main run method"""
+        try:
+            self.logger.info("🔐 Telegram Security Bot starting up...")
+            port = int(os.getenv("PORT", 5000))
+            self.logger.info(f"🌐 Server binding to port {port}")
 
-        # Flask app instance
-        app = Flask(__name__, template_folder="templates")
+            # Start bot thread
+            bot_thread = threading.Thread(target=self.start_polling, daemon=True)
+            bot_thread.start()
 
-        # ✅ Route must be defined *after* app is created
-        @app.route("/", methods=["GET", "HEAD"])
-        def index():
-            return render_template("base.html")
+            # Start health check thread once
+            health_thread = threading.Thread(target=self._health_check, daemon=True)
+            health_thread.start()
 
-        # Start Flask server
-        app.run(host="0.0.0.0", port=port, debug=False)
+            # Flask app
+            app = Flask(__name__, template_folder="templates")
 
-    except KeyboardInterrupt:
-        self.logger.info("Bot stopped by user")
-    except Exception as e:
-        self.logger.error(f"Fatal error: {e}")
-        raise
-    finally:
-        self.running = False
-        self.db.close()
-        self.logger.info("🛑 Bot shutdown complete")
+            @app.route("/", methods=["GET", "HEAD"])
+            def index():
+                return render_template("base.html")
+
+            app.run(host="0.0.0.0", port=port, debug=False)
+
+        except KeyboardInterrupt:
+            self.logger.info("Bot stopped by user")
+        except Exception as e:
+            self.logger.error(f"Fatal error: {e}")
+            raise
+        finally:
+            self.running = False
+            self.db.close()
+            self.logger.info("🛑 Bot shutdown complete")
         
 def main():
     """Main entry point"""
     try:
         bot = TelegramSecurityBot()
-        bot.run()
+        bot.run()   # ✅ now works
     except Exception as e:
         logger = setup_logger("main")
         logger.error(f"Failed to start bot: {e}")
         sys.exit(1)
-
 
 if __name__ == "__main__":
     main()
