@@ -15,7 +15,7 @@ import telebot
 from telebot import apihelper
 from telebot.types import Message, CallbackQuery
 
-from flask import Flask, render_template
+from flask import Flask, render_template, request, jsonify
 
 # Enable middleware for the bot
 apihelper.ENABLE_MIDDLEWARE = True
@@ -189,18 +189,29 @@ class TelegramSecurityBot:
                     
                 self.logger.info(f"🚀 Starting bot polling (attempt {attempt+1}/{max_retries})")
                 
+                # First, try to stop any existing polling to avoid conflicts
+                try:
+                    self.bot.stop_polling()
+                except:
+                    pass
+                
                 # Start polling with a specific allowed_update
                 self.bot.infinity_polling(
                     timeout=30,
                     long_polling_timeout=30,
                     skip_pending=True,
                     none_stop=True,
-                    allowed_updates=["message", "callback_query"]
+                    allowed_updates=["message", "callback_query"],
+                    restart_on_change=True
                 )
                 break
             except Exception as e:
                 self.logger.error(f"Polling attempt {attempt+1} failed: {e}")
-                if attempt < max_retries - 1 and self.running:
+                if "Conflict: terminated by other getUpdates request" in str(e):
+                    self.logger.error("Another bot instance is running. Please stop it first.")
+                    # Don't retry if it's a conflict error
+                    break
+                elif attempt < max_retries - 1 and self.running:
                     self.logger.info(f"Retrying in {retry_delay} seconds...")
                     time.sleep(retry_delay)
                     retry_delay *= 2
@@ -216,6 +227,9 @@ class TelegramSecurityBot:
             return False
             
         try:
+            # Check if bot can connect to Telegram API
+            self.bot.get_me()
+            
             self.running = True
             
             # Start health check thread
@@ -230,7 +244,10 @@ class TelegramSecurityBot:
             return True
             
         except Exception as e:
-            self.logger.error(f"Failed to start bot: {e}")
+            if "Conflict" in str(e):
+                self.logger.error("Another bot instance is already running. Please stop it first.")
+            else:
+                self.logger.error(f"Failed to start bot: {e}")
             self.running = False
             return False
 
@@ -246,8 +263,18 @@ class TelegramSecurityBot:
     def cleanup(self):
         """Cleanup resources"""
         self.stop()
-        if hasattr(self, 'db'):
+        # Check if the database object has a close method before calling it
+        if hasattr(self, 'db') and hasattr(self.db, 'close'):
             self.db.close()
+            self.logger.info("Database connection closed")
+        elif hasattr(self, 'db') and hasattr(self.db, 'connection'):
+            # Try to close the connection if it exists
+            try:
+                if hasattr(self.db.connection, 'close'):
+                    self.db.connection.close()
+                    self.logger.info("Database connection closed")
+            except:
+                pass
         self.logger.info("🛑 Bot cleanup complete")
 
     def is_running(self):
@@ -264,20 +291,23 @@ def create_flask_app():
     
     @app.route("/", methods=["GET", "HEAD"])
     def index():
+        if request.method == "HEAD":
+            # Just return a simple response for HEAD requests
+            return "", 200
         return render_template("base.html", bot_running=bot_instance.is_running() if bot_instance else False)
     
-    @app.route("/health")
+    @app.route("/health", methods=["GET", "HEAD"])
     def health_check():
         try:
             if not bot_instance:
-                return {
+                return jsonify({
                     "status": "unhealthy",
                     "bot": "not initialized",
                     "last_check": time.strftime("%Y-%m-%d %H:%M:%S"),
                     "threads": threading.active_count(),
                     "database": "unknown",
                     "api_keys": "⚠️ Missing"
-                }, 503
+                }), 503
 
             # Bot running status
             bot_running = bot_instance.is_running()
@@ -286,40 +316,56 @@ def create_flask_app():
             db_status = "unknown"
             try:
                 if hasattr(bot_instance, "db") and bot_instance.db:
+                    # Check if database has a connection attribute or method
                     if hasattr(bot_instance.db, "is_connected"):
                         db_status = "connected" if bot_instance.db.is_connected() else "error"
+                    elif hasattr(bot_instance.db, "connection"):
+                        db_status = "connected" if bot_instance.db.connection else "error"
                     else:
-                        db_status = "ok"   # fallback if no .is_connected()
+                        db_status = "ok"  # fallback if no connection check available
             except Exception:
                 db_status = "error"
 
             # API key check
             api_status = "⚠️ Missing"
             try:
-                if bot_instance.config.URLSCAN_API_KEY and bot_instance.config.CLOUDFLARE_API_KEY:
+                if (hasattr(bot_instance.config, "URLSCAN_API_KEY") and 
+                    hasattr(bot_instance.config, "CLOUDFLARE_API_KEY") and
+                    bot_instance.config.URLSCAN_API_KEY and 
+                    bot_instance.config.CLOUDFLARE_API_KEY):
                     api_status = "✅ Loaded"
             except Exception:
                 api_status = "⚠️ Missing"
 
-            return {
+            return jsonify({
                 "status": "healthy" if bot_running else "unhealthy",
                 "bot": "running" if bot_running else "stopped",
                 "last_check": time.strftime("%Y-%m-%d %H:%M:%S"),
                 "threads": threading.active_count(),
                 "database": db_status,
                 "api_keys": api_status
-            }, 200 if bot_running else 503
+            }), 200 if bot_running else 503
 
         except Exception as e:
-            return {"status": "error", "message": str(e)}, 500
+            return jsonify({"status": "error", "message": str(e)}), 500
 
-    @app.route("/stop_bot")
+    @app.route("/stop_bot", methods=["POST"])
     def stop_bot():
         if not bot_instance:
-            return {"status": "error", "message": "Bot not initialized"}, 500
+            return jsonify({"status": "error", "message": "Bot not initialized"}), 500
             
         bot_instance.stop()
-        return {"status": "stopped", "message": "Bot stopped successfully"}, 200
+        return jsonify({"status": "stopped", "message": "Bot stopped successfully"}), 200
+    
+    @app.route("/start_bot", methods=["POST"])
+    def start_bot():
+        if not bot_instance:
+            return jsonify({"status": "error", "message": "Bot not initialized"}), 500
+            
+        if bot_instance.start():
+            return jsonify({"status": "started", "message": "Bot started successfully"}), 200
+        else:
+            return jsonify({"status": "error", "message": "Failed to start bot"}), 500
     
     return app
 
@@ -330,7 +376,7 @@ def main():
     logger = setup_logger(__name__)
     
     try:
-        # Initialize the bot (but don't start it yet)
+        # Initialize the bot
         bot_instance = TelegramSecurityBot()
         
         # Start the bot
