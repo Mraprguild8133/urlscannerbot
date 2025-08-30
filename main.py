@@ -14,7 +14,6 @@ from typing import Optional
 import telebot
 from telebot import apihelper
 from telebot.types import Message, CallbackQuery
-
 from flask import Flask, render_template  # ✅ Flask support
 
 # Enable middleware for the bot
@@ -211,9 +210,9 @@ class TelegramSecurityBot:
             # Flask web server
             app = Flask(__name__, template_folder="templates")
 
-            @app.route("/")
-            def index():
-                return render_template("base.html")
+            @app.route("/", methods=["GET", "HEAD"])
+def index():
+    return render_template("base.html")
 
             app.run(host="0.0.0.0", port=port, debug=False)
 
