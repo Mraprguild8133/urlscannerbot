@@ -27,7 +27,6 @@ from services.threat_analyzer import ThreatAnalyzer
 
 
 class TelegramSecurityBot:
-    #"""Main bot class that orchestrates all components"""
     def __init__(self):
         self.logger = setup_logger(__name__)
         self.config = Config()
@@ -187,7 +186,6 @@ class TelegramSecurityBot:
                     self.logger.error("Max retries reached. Bot failed to start.")
                     raise
                     class TelegramSecurityBot:
-    """Main bot class that orchestrates all components"""
 
     def __init__(self):
         ...
