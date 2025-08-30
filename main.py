@@ -262,7 +262,7 @@ def create_flask_app():
     """Create and configure Flask application"""
     app = Flask(__name__, template_folder="templates")
     
-    @app.route("/")
+    @app.route("/", methods=["GET", "HEAD"])
     def index():
         return render_template("base.html", bot_running=bot_instance.is_running() if bot_instance else False)
     
