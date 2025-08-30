@@ -3,19 +3,15 @@
 Telegram Security Bot - Main Entry Point
 Real-time URL threat analysis using URLScan.io and Cloudflare Radar APIs
 """
-
 import os
 import sys
 import time
-import signal
 import threading
 from typing import Optional
-
 import telebot
 from telebot import apihelper
 from telebot.types import Message, CallbackQuery
-
-from flask import Flask, render_template  # ✅ Added Flask support
+from flask import Flask, render_template
 
 # Enable middleware for the bot
 apihelper.ENABLE_MIDDLEWARE = True
@@ -64,10 +60,26 @@ class TelegramSecurityBot:
         
         # Setup signal handlers for graceful shutdown
         if sys.platform != "win32":
+            import signal
             signal.signal(signal.SIGINT, self._signal_handler)
             signal.signal(signal.SIGTERM, self._signal_handler)
         
         self.logger.info("🤖 Telegram Security Bot initialized successfully")
+
+    def check_webhook_status(self):
+        """Check if a webhook is currently set"""
+        try:
+            webhook_info = self.bot.get_webhook_info()
+            if webhook_info.url:
+                self.logger.warning(f"⚠️ Active webhook detected: {webhook_info.url}")
+                self.logger.warning(f"Webhook pending updates: {webhook_info.pending_update_count}")
+                return True
+            else:
+                self.logger.info("✅ No active webhook detected")
+                return False
+        except Exception as e:
+            self.logger.error(f"❌ Error checking webhook status: {e}")
+            return False
 
     # ---------------- BOT HANDLERS ----------------
     def _setup_handlers(self):
@@ -171,6 +183,13 @@ class TelegramSecurityBot:
             try:
                 self.logger.info(f"🚀 Starting bot polling (attempt {attempt+1}/{max_retries})")
                 
+                # Check and delete any existing webhook first
+                if self.check_webhook_status():
+                    self.logger.info("🔄 Deleting existing webhook...")
+                    self.bot.delete_webhook()
+                    time.sleep(1)  # Brief pause after deleting webhook
+                    self.check_webhook_status()  # Verify deletion
+                
                 # Start health check thread
                 health_thread = threading.Thread(target=self._health_check, daemon=True)
                 health_thread.start()
@@ -180,7 +199,8 @@ class TelegramSecurityBot:
                     timeout=30,
                     long_polling_timeout=30,
                     skip_pending=True,
-                    none_stop=True
+                    none_stop=True,
+                    restart_on_change=True
                 )
                 break
             except Exception as e:
