@@ -1,9 +1,4 @@
 #!/usr/bin/env python3
-"""
-Telegram Security Bot - Main Entry Point
-Real-time URL threat analysis using URLScan.io and Cloudflare Radar APIs
-"""
-
 import os
 import sys
 import time
@@ -32,8 +27,7 @@ from services.threat_analyzer import ThreatAnalyzer
 
 
 class TelegramSecurityBot:
-    """Main bot class that orchestrates all components"""
-
+    #"""Main bot class that orchestrates all components"""
     def __init__(self):
         self.logger = setup_logger(__name__)
         self.config = Config()
