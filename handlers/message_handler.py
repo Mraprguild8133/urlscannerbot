@@ -138,7 +138,7 @@ Admins can adjust threat thresholds and manage whitelists/blacklists per chat.
 
 <b>🔗 Supported URLs:</b>
 • HTTP/HTTPS links
-• Telegram links (https://t.me/aprurlscannerbot)
+• Telegram links (https://t.me/@aprurlscannerbot)
 • URL shorteners
 • IP addresses
 • Email addresses
