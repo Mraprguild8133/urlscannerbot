@@ -211,13 +211,9 @@ class TelegramSecurityBot:
             # Flask web server
             app = Flask(__name__, template_folder="templates")
 
-            @app.route("/", methods=["GET", "HEAD"])
+@app.route("/", methods=["GET", "HEAD"])
 def index():
     return render_template("base.html")
-
-@app.route("/config", methods=["GET"])
-def config_page():
-    return render_template("config.html")
 
             app.run(host="0.0.0.0", port=port, debug=False)
 
