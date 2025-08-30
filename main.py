@@ -11,7 +11,7 @@ import signal
 import threading
 import atexit
 from typing import Optional
-
+from Database import Database 
 import telebot
 from telebot import apihelper
 from telebot.types import Message, CallbackQuery
@@ -280,7 +280,7 @@ def health_check():
                 "bot": "running",
                 "last_check": time.strftime("%Y-%m-%d %H:%M:%S"),
                 "threads": threading.active_count(),
-                "database": "connected" if bot_instance.db.is_connected() else "error",
+                "Database": "connected" if bot_instance.db.is_connected() else "error",
                 "api_keys": "✅ Loaded" if bot_instance.config.URLSCAN_API_KEY and bot_instance.config.CLOUDFLARE_API_KEY else "⚠️ Missing"
             }, 200
         return {
@@ -288,7 +288,7 @@ def health_check():
             "bot": "stopped",
             "last_check": time.strftime("%Y-%m-%d %H:%M:%S"),
             "threads": threading.active_count(),
-            "database": "error",
+            "Database": "error",
             "api_keys": "⚠️ Missing"
         }, 503
     except Exception as e:
