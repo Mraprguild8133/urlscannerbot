@@ -14,7 +14,7 @@ from typing import Optional
 import telebot
 from telebot import apihelper
 from telebot.types import Message, CallbackQuery
-from flask import Flask, render_template
+from flask import Flask, render_template, request
 
 # Enable middleware for the bot
 apihelper.ENABLE_MIDDLEWARE = True
@@ -44,9 +44,6 @@ class TelegramSecurityBot:
             parse_mode='HTML',
             threaded=True
         )
-
-        # Remove webhook to prevent 409 conflict errors
-        self.bot.remove_webhook()
 
         # Initialize database
         self.db = Database()
@@ -160,7 +157,10 @@ class TelegramSecurityBot:
                 self.logger.info("🟢 Bot health check passed")
             except Exception as e:
                 self.logger.error(f"🔴 Bot health check failed: {e}")
-                # Only log; don’t auto-restart to avoid thread explosion
+                # restart polling if needed
+                self.bot.stop_polling()
+                time.sleep(5)
+                threading.Thread(target=self.start_polling, daemon=True).start()
 
     # ---------------- POLLING ----------------
     def start_polling(self):
@@ -172,6 +172,9 @@ class TelegramSecurityBot:
             try:
                 self.logger.info(f"🚀 Starting bot polling (attempt {attempt+1}/{max_retries})")
 
+                # ✅ Always remove webhook before polling
+                self.bot.remove_webhook()
+
                 # Start health check thread
                 health_thread = threading.Thread(target=self._health_check, daemon=True)
                 health_thread.start()
@@ -180,8 +183,7 @@ class TelegramSecurityBot:
                 self.bot.infinity_polling(
                     timeout=30,
                     long_polling_timeout=30,
-                    skip_pending=True,
-                    none_stop=True
+                    skip_pending=True
                 )
                 break
             except Exception as e:
@@ -210,7 +212,22 @@ class TelegramSecurityBot:
             def index():
                 return render_template("base.html", status=self.running)
 
-            app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)), debug=False)
+            @app.route("/shutdown", methods=["POST"])
+            def shutdown():
+                self.logger.info("🚦 Shutdown requested via Flask")
+                self.running = False
+                self.bot.stop_polling()
+                func = request.environ.get("werkzeug.server.shutdown")
+                if func:
+                    func()
+                return "Shutting down...", 200
+
+            app.run(
+                host="0.0.0.0",
+                port=int(os.getenv("PORT", 5000)),
+                debug=False,
+                use_reloader=False   # ✅ disable Flask auto-reloader
+            )
 
         except KeyboardInterrupt:
             self.logger.info("Bot stopped by user")
@@ -236,4 +253,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-                            
+        
