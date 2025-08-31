@@ -1,193 +1,179 @@
 #!/usr/bin/env python3
 """
-Telegram Security Bot - Fixed Main Entry Point
-Simplified version to ensure it runs properly
+Telegram Security Bot - Main Entry Point
+Real-time URL threat analysis using URLScan.io and Cloudflare Radar APIs
 """
 
 import os
 import sys
 import time
 import signal
-import logging
 import threading
 from typing import Optional
 
 import telebot
+from telebot import apihelper
 from telebot.types import Message, CallbackQuery
 
-# Set up basic logging first
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(sys.stdout),
-        logging.FileHandler('bot.log')
-    ]
-)
-logger = logging.getLogger(__name__)
+from flask import Flask, render_template  # ✅ Added Flask support
 
-# Try to import other modules with error handling
-try:
-    from config import Config
-    from database import Database
-    from handlers.message_handler import MessageHandler
-    from handlers.admin_handler import AdminHandler
-    from services.url_scanner import URLScanner
-    from services.cloudflare_radar import CloudflareRadar
-    from services.admin_manager import AdminManager
-    from services.threat_analyzer import ThreatAnalyzer
-except ImportError as e:
-    logger.error(f"Import error: {e}")
-    logger.error("Please make sure all modules are properly installed and configured")
-    sys.exit(1)
+# Enable middleware for the bot
+apihelper.ENABLE_MIDDLEWARE = True
+
+from config import Config
+from database import Database
+from utils.logger import setup_logger
+from handlers.message_handler import MessageHandler
+from handlers.admin_handler import AdminHandler
+from services.url_scanner import URLScanner
+from services.cloudflare_radar import CloudflareRadar
+from services.admin_manager import AdminManager
+from services.threat_analyzer import ThreatAnalyzer
+
 
 class TelegramSecurityBot:
-    """Main bot class - simplified and fixed"""
+    """Main bot class that orchestrates all components"""
     
     def __init__(self):
-        logger.info("🤖 Initializing Telegram Security Bot...")
-        
-        # Initialize configuration
-        try:
-            self.config = Config()
-            logger.info("✅ Configuration loaded successfully")
-        except Exception as e:
-            logger.error(f"❌ Failed to load configuration: {e}")
-            sys.exit(1)
-        
+        self.logger = setup_logger(__name__)
+        self.config = Config()
         self.running = True
-        self.webhook_mode = os.getenv('WEBHOOK_MODE', 'false').lower() == 'true'
-        
-        # Get port from environment variable or use default
-        self.port = int(os.getenv('PORT', 5000))
-        logger.info(f"🌐 Using port: {self.port}")
         
         # Initialize bot
-        try:
-            self.bot = telebot.TeleBot(
-                self.config.TELEGRAM_BOT_TOKEN,
-                parse_mode='HTML',
-                threaded=True
-            )
-            logger.info("✅ Bot instance created successfully")
-        except Exception as e:
-            logger.error(f"❌ Failed to create bot instance: {e}")
-            sys.exit(1)
+        self.bot = telebot.TeleBot(
+            self.config.TELEGRAM_BOT_TOKEN,
+            parse_mode='HTML',
+            threaded=True
+        )
         
         # Initialize database
-        try:
-            self.db = Database()
-            logger.info("✅ Database initialized successfully")
-        except Exception as e:
-            logger.error(f"❌ Failed to initialize database: {e}")
-            # Continue without database if it's not critical
+        self.db = Database()
         
-        # Initialize services with error handling
-        try:
-            self.url_scanner = URLScanner(self.config.URLSCAN_API_KEY)
-            self.cloudflare_radar = CloudflareRadar(self.config.CLOUDFLARE_API_KEY)
-            self.admin_manager = AdminManager(self.db)
-            self.threat_analyzer = ThreatAnalyzer(self.url_scanner, self.cloudflare_radar, self.db)
-            logger.info("✅ Services initialized successfully")
-        except Exception as e:
-            logger.error(f"❌ Failed to initialize services: {e}")
-            # Continue with limited functionality
+        # Initialize services
+        self.url_scanner = URLScanner(self.config.URLSCAN_API_KEY)
+        self.cloudflare_radar = CloudflareRadar(self.config.CLOUDFLARE_API_KEY)
+        self.admin_manager = AdminManager(self.db)
+        self.threat_analyzer = ThreatAnalyzer(self.url_scanner, self.cloudflare_radar, self.db)
         
         # Initialize handlers
-        try:
-            self.message_handler = MessageHandler(self.bot, self.threat_analyzer, self.admin_manager, self.db)
-            self.admin_handler = AdminHandler(self.bot, self.admin_manager, self.db)
-            logger.info("✅ Handlers initialized successfully")
-        except Exception as e:
-            logger.error(f"❌ Failed to initialize handlers: {e}")
-            sys.exit(1)
+        self.message_handler = MessageHandler(self.bot, self.threat_analyzer, self.admin_manager, self.db)
+        self.admin_handler = AdminHandler(self.bot, self.admin_manager, self.db)
         
         # Setup bot handlers
         self._setup_handlers()
         
-        # Setup signal handlers
-        self._setup_signal_handlers()
-        
-        logger.info("✅ Telegram Security Bot initialized successfully")
-
-    def _setup_signal_handlers(self):
-        """Setup signal handlers for graceful shutdown"""
-        if hasattr(signal, 'SIGINT'):
+        # Setup signal handlers for graceful shutdown
+        if sys.platform != "win32":
             signal.signal(signal.SIGINT, self._signal_handler)
-        if hasattr(signal, 'SIGTERM'):
             signal.signal(signal.SIGTERM, self._signal_handler)
-        logger.info("✅ Signal handlers set up")
+        
+        self.logger.info("🤖 Telegram Security Bot initialized successfully")
 
+    # ---------------- BOT HANDLERS ----------------
     def _setup_handlers(self):
         """Setup all bot message and callback handlers"""
         
-        # Basic command handlers
-        @self.bot.message_handler(commands=['start', 'help'])
-        def handle_start_help(message: Message):
-            try:
-                if message.text.startswith('/start'):
-                    self.message_handler.handle_start(message)
-                else:
-                    self.message_handler.handle_help(message)
-            except Exception as e:
-                logger.error(f"Error in start/help handler: {e}")
-                self.bot.reply_to(message, "❌ An error occurred. Please try again.")
+        # Command handlers
+        @self.bot.message_handler(commands=['start'])
+        def handle_start(message: Message):
+            self.message_handler.handle_start(message)
+
+        @self.bot.message_handler(commands=['help'])
+        def handle_help(message: Message):
+            self.message_handler.handle_help(message)
 
         @self.bot.message_handler(commands=['scan'])
-        def handle_scan(message: Message):
-            try:
-                self.message_handler.handle_manual_scan(message)
-            except Exception as e:
-                logger.error(f"Error in scan handler: {e}")
-                self.bot.reply_to(message, "❌ Scan failed. Please try again.")
+        def handle_manual_scan(message: Message):
+            self.message_handler.handle_manual_scan(message)
 
         @self.bot.message_handler(commands=['stats'])
         def handle_stats(message: Message):
-            try:
-                self.message_handler.handle_stats(message)
-            except Exception as e:
-                logger.error(f"Error in stats handler: {e}")
-                self.bot.reply_to(message, "❌ Could not retrieve statistics.")
+            self.message_handler.handle_stats(message)
 
-        # Auto URL scanning for text messages
+        @self.bot.message_handler(commands=['settings'])
+        def handle_settings(message: Message):
+            self.message_handler.handle_settings(message)
+
+        # Admin commands
+        @self.bot.message_handler(commands=['admin'])
+        def handle_admin(message: Message):
+            self.admin_handler.handle_admin(message)
+
+        @self.bot.message_handler(commands=['addadmin'])
+        def handle_add_admin(message: Message):
+            self.admin_handler.handle_add_admin(message)
+
+        @self.bot.message_handler(commands=['removeadmin'])
+        def handle_remove_admin(message: Message):
+            self.admin_handler.handle_remove_admin(message)
+
+        @self.bot.message_handler(commands=['ban'])
+        def handle_ban(message: Message):
+            self.admin_handler.handle_ban(message)
+
+        @self.bot.message_handler(commands=['unban'])
+        def handle_unban(message: Message):
+            self.admin_handler.handle_unban(message)
+
+        @self.bot.message_handler(commands=['whitelist'])
+        def handle_whitelist(message: Message):
+            self.admin_handler.handle_whitelist(message)
+
+        @self.bot.message_handler(commands=['blacklist'])
+        def handle_blacklist(message: Message):
+            self.admin_handler.handle_blacklist(message)
+
+        @self.bot.message_handler(commands=['threshold'])
+        def handle_threshold(message: Message):
+            self.admin_handler.handle_threshold(message)
+
+        # Auto URL scanning for all text messages
         @self.bot.message_handler(func=lambda message: True, content_types=['text'])
         def handle_text(message: Message):
-            try:
-                self.message_handler.handle_text_message(message)
-            except Exception as e:
-                logger.error(f"Error in text message handler: {e}")
-                # Don't reply to avoid spamming users
+            self.message_handler.handle_text_message(message)
 
-        logger.info("✅ Bot handlers set up successfully")
+        # Callback query handlers
+        @self.bot.callback_query_handler(func=lambda call: True)
+        def handle_callback(call: CallbackQuery):
+            self.message_handler.handle_callback(call)
 
+    # ---------------- SIGNALS ----------------
     def _signal_handler(self, signum, frame):
         """Handle shutdown signals gracefully"""
-        logger.info(f"🛑 Received shutdown signal. Stopping bot...")
+        self.logger.info(f"Received signal {signum}. Shutting down gracefully...")
         self.running = False
-        try:
-            self.bot.stop_polling()
-        except:
-            pass
-        try:
-            if hasattr(self, 'db'):
-                self.db.close()
-        except:
-            pass
-        logger.info("✅ Bot stopped gracefully")
-        sys.exit(0)
+        self.bot.stop_polling()
 
-    def start_polling_safe(self):
-        """Safe polling with error handling"""
-        max_retries = 3
-        retry_delay = 5
+    # ---------------- HEALTH CHECK ----------------
+    def _health_check(self):
+        """Periodic health check and restart if needed"""
+        while self.running:
+            try:
+                time.sleep(300)  # Check every 5 minutes
+                self.bot.get_me()
+                self.logger.info("🟢 Bot health check passed")
+            except Exception as e:
+                self.logger.error(f"🔴 Bot health check failed: {e}")
+                if self.running:
+                    self.logger.info("Attempting to restart bot polling...")
+                    try:
+                        self.start_polling()
+                    except Exception as restart_error:
+                        self.logger.error(f"Failed to restart bot: {restart_error}")
+
+    # ---------------- POLLING ----------------
+    def start_polling(self):
+        """Start bot polling with error recovery"""
+        max_retries = 5
+        retry_delay = 10
         
         for attempt in range(max_retries):
             try:
-                logger.info(f"🔄 Starting polling (attempt {attempt + 1}/{max_retries})")
+                self.logger.info(f"🚀 Starting bot polling (attempt {attempt+1}/{max_retries})")
                 
-                # Test bot connection first
-                bot_info = self.bot.get_me()
-                logger.info(f"✅ Connected to bot: @{bot_info.username}")
+                # Start health check thread
+                health_thread = threading.Thread(target=self._health_check, daemon=True)
+                health_thread.start()
                 
                 # Start polling
                 self.bot.infinity_polling(
@@ -197,82 +183,56 @@ class TelegramSecurityBot:
                     none_stop=True
                 )
                 break
-                
             except Exception as e:
-                logger.error(f"❌ Polling attempt {attempt + 1} failed: {e}")
-                
+                self.logger.error(f"Polling attempt {attempt+1} failed: {e}")
                 if attempt < max_retries - 1:
-                    logger.info(f"⏳ Retrying in {retry_delay} seconds...")
+                    self.logger.info(f"Retrying in {retry_delay} seconds...")
                     time.sleep(retry_delay)
                     retry_delay *= 2
                 else:
-                    logger.error("❌ Max retries reached. Polling failed completely.")
-                    return False
-        
-        return True
+                    self.logger.error("Max retries reached. Bot failed to start.")
+                    raise
 
     def run(self):
         """Main run method"""
-        logger.info("🚀 Starting Telegram Security Bot...")
-        
-        # Validate essential configuration
-        if not hasattr(self.config, 'TELEGRAM_BOT_TOKEN') or not self.config.TELEGRAM_BOT_TOKEN:
-            logger.error("❌ TELEGRAM_BOT_TOKEN is not set or invalid")
-            sys.exit(1)
-        
         try:
-            if self.webhook_mode:
-                logger.info("🌐 Webhook mode selected")
-                # For webhook mode, you'd need to set up a web server
-                # This is simplified for now - focus on polling first
-                logger.warning("⚠️ Webhook mode not fully implemented. Using polling instead.")
-            
-            # Start polling
-            success = self.start_polling_safe()
-            
-            if not success:
-                logger.error("❌ Failed to start polling after multiple attempts")
-                sys.exit(1)
-                
+            self.logger.info("🔐 Telegram Security Bot starting up...")
+            self.logger.info(f"🌐 Server binding to port {os.getenv('PORT', 5000)}")
+
+            # Start bot in a separate thread
+            bot_thread = threading.Thread(target=self.start_polling, daemon=True)
+            bot_thread.start()
+
+            # Start Flask web server
+            app = Flask(__name__, template_folder="templates")
+
+            @app.route("/")
+            def index():
+                return render_template("base.html")
+
+            app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)), debug=False)
+
         except KeyboardInterrupt:
-            logger.info("⏹️ Bot stopped by user")
+            self.logger.info("Bot stopped by user")
         except Exception as e:
-            logger.error(f"💥 Fatal error: {e}", exc_info=True)
+            self.logger.error(f"Fatal error: {e}")
+            raise
         finally:
             self.running = False
-            try:
-                if hasattr(self, 'db'):
-                    self.db.close()
-            except:
-                pass
-            logger.info("🛑 Bot shutdown complete")
+            self.db.close()
+            self.logger.info("🛑 Bot shutdown complete")
+
 
 def main():
     """Main entry point"""
     try:
-        print("=" * 50)
-        print("Telegram Security Bot - Starting Up")
-        print("=" * 50)
-        
-        # Display basic info
-        port = int(os.getenv('PORT', 5000))
-        webhook_mode = os.getenv('WEBHOOK_MODE', 'false').lower() == 'true'
-        
-        print(f"Port: {port}")
-        print(f"Webhook mode: {webhook_mode}")
-        print("Check bot.log for detailed logs")
-        print("Press Ctrl+C to stop the bot")
-        print("=" * 50)
-        
-        # Create and run bot
         bot = TelegramSecurityBot()
         bot.run()
-        
     except Exception as e:
-        logger.error(f"💥 Failed to start bot: {e}", exc_info=True)
-        print(f"Error: {e}")
-        print("Check bot.log for details")
+        logger = setup_logger(__name__)
+        logger.error(f"Failed to start bot: {e}")
         sys.exit(1)
+
 
 if __name__ == "__main__":
     main()
