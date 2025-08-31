@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Telegram Security Bot - Main Entry Point
-Enhanced with better error handling and thread management
+Enhanced with port configuration and better error handling
 """
 
 import os
@@ -71,8 +71,14 @@ class TelegramSecurityBot:
         self.config = Config()
         self.running = True
         self.webhook_mode = os.getenv('WEBHOOK_MODE', 'false').lower() == 'true'
+        
+        # Get port from environment variable or use default
+        self.port = int(os.getenv('PORT', 5000))
+        self.logger.info(f"🌐 Configured to use port: {self.port}")
+        
         self.polling_thread = None
         self.health_thread = None
+        self.flask_thread = None
         
         # Initialize bot
         self.bot = telebot.TeleBot(
@@ -215,12 +221,83 @@ class TelegramSecurityBot:
             self.bot.set_webhook(
                 url=webhook_url,
                 certificate=open(os.getenv('SSL_CERT_PATH'), 'r') if os.getenv('SSL_CERT_PATH') else None,
-                timeout=60
+                timeout=60,
+                allowed_updates=["message", "callback_query"]
             )
             self.logger.info(f"Webhook set to: {webhook_url}")
         except Exception as e:
             self.logger.error(f"Failed to set webhook: {e}")
             raise
+
+    # ---------------- FLASK SERVER SETUP ----------------
+    def setup_flask_server(self):
+        """Setup Flask server for webhook mode or health checks"""
+        app = Flask(__name__, template_folder="templates")
+
+        @app.route("/")
+        def index():
+            return render_template("base.html")
+            
+        @app.route("/health")
+        def health_check():
+            try:
+                # Basic health check
+                status = {
+                    "status": "healthy", 
+                    "mode": "webhook" if self.webhook_mode else "polling",
+                    "port": self.port,
+                    "timestamp": time.time()
+                }
+                if not self.webhook_mode:
+                    bot_info = self.bot.get_me()
+                    status["bot_name"] = bot_info.first_name
+                return json.dumps(status), 200
+            except Exception as e:
+                return json.dumps({"status": "unhealthy", "error": str(e), "port": self.port}), 500
+
+        @app.route("/info")
+        def bot_info():
+            """Endpoint to get bot information"""
+            try:
+                info = {
+                    "name": "Telegram Security Bot",
+                    "version": "1.0.0",
+                    "port": self.port,
+                    "mode": "webhook" if self.webhook_mode else "polling",
+                    "webhook_url": os.getenv('WEBHOOK_URL', 'Not set'),
+                    "uptime": time.time() - self.start_time if hasattr(self, 'start_time') else 0
+                }
+                return json.dumps(info), 200
+            except Exception as e:
+                return json.dumps({"error": str(e)}), 500
+
+        # Setup webhook endpoints if in webhook mode
+        if self.webhook_mode:
+            self.setup_webhook(app)
+        
+        return app
+
+    def run_flask_server(self, app):
+        """Run Flask server in a separate thread"""
+        context = None
+        cert_path = os.getenv('SSL_CERT_PATH')
+        key_path = os.getenv('SSL_KEY_PATH')
+        
+        if cert_path and key_path and os.path.exists(cert_path) and os.path.exists(key_path):
+            context = ssl.SSLContext(ssl.PROTOCOL_TLSv1_2)
+            context.load_cert_chain(cert_path, key_path)
+            self.logger.info("SSL context loaded successfully")
+        
+        self.logger.info(f"Starting Flask server on port {self.port} with SSL: {context is not None}")
+        
+        # Run Flask app
+        app.run(
+            host="0.0.0.0",
+            port=self.port,
+            debug=False,
+            ssl_context=context,
+            use_reloader=False
+        )
 
     # ---------------- SIGNALS ----------------
     def _signal_handler(self, signum, frame):
@@ -249,11 +326,21 @@ class TelegramSecurityBot:
                 self.logger.error(f"Error removing webhook: {e}")
         
         # Wait for threads to finish
+        threads_to_join = []
         if self.polling_thread and self.polling_thread.is_alive():
-            self.polling_thread.join(timeout=10)
+            threads_to_join.append(self.polling_thread)
         
         if self.health_thread and self.health_thread.is_alive():
-            self.health_thread.join(timeout=5)
+            threads_to_join.append(self.health_thread)
+        
+        if self.flask_thread and self.flask_thread.is_alive():
+            threads_to_join.append(self.flask_thread)
+        
+        # Join threads with timeout
+        for thread in threads_to_join:
+            thread.join(timeout=5)
+            if thread.is_alive():
+                self.logger.warning(f"Thread {thread.name} did not finish gracefully")
         
         # Close database connection
         try:
@@ -306,7 +393,7 @@ class TelegramSecurityBot:
                 self.logger.error(f"Error stopping old polling thread: {e}")
         
         # Start new polling thread
-        self.polling_thread = threading.Thread(target=self._safe_polling, daemon=True)
+        self.polling_thread = threading.Thread(target=self._safe_polling, daemon=True, name="PollingThread")
         self.polling_thread.start()
         self.logger.info("Polling restarted successfully")
 
@@ -342,11 +429,11 @@ class TelegramSecurityBot:
     def start_polling(self):
         """Start bot polling with error recovery"""
         # Start health check thread
-        self.health_thread = threading.Thread(target=self._health_check, daemon=True)
+        self.health_thread = threading.Thread(target=self._health_check, daemon=True, name="HealthCheckThread")
         self.health_thread.start()
         
         # Start polling in a separate thread
-        self.polling_thread = threading.Thread(target=self._safe_polling, daemon=True)
+        self.polling_thread = threading.Thread(target=self._safe_polling, daemon=True, name="PollingThread")
         self.polling_thread.start()
         
         # Wait for the polling thread to complete
@@ -354,6 +441,8 @@ class TelegramSecurityBot:
 
     def run(self):
         """Main run method"""
+        self.start_time = time.time()
+        
         try:
             self.logger.info("🔐 Telegram Security Bot starting up...")
             
@@ -362,56 +451,28 @@ class TelegramSecurityBot:
                 self.logger.error("TELEGRAM_BOT_TOKEN is not set")
                 sys.exit(1)
                 
-            port = int(os.getenv("PORT", 5000))
-            self.logger.info(f"🌐 Server binding to port {port}")
+            self.logger.info(f"🌐 Server configured for port: {self.port}")
 
-            # Create Flask app
-            app = Flask(__name__, template_folder="templates")
-
-            @app.route("/")
-            def index():
-                return render_template("base.html")
-                
-            @app.route("/health")
-            def health_check():
-                try:
-                    # Basic health check
-                    if not self.webhook_mode:
-                        self.bot.get_me()
-                    return json.dumps({"status": "healthy", "mode": "webhook" if self.webhook_mode else "polling"}), 200
-                except Exception as e:
-                    return json.dumps({"status": "unhealthy", "error": str(e)}), 500
-
-            # Setup webhook if in production mode
+            # Setup Flask server
+            app = self.setup_flask_server()
+            
             if self.webhook_mode:
-                self.setup_webhook(app)
-                
-                # Start Flask in production mode
-                context = None
-                cert_path = os.getenv('SSL_CERT_PATH')
-                key_path = os.getenv('SSL_KEY_PATH')
-                
-                if cert_path and key_path:
-                    context = ssl.SSLContext(ssl.PROTOCOL_TLSv1_2)
-                    context.load_cert_chain(cert_path, key_path)
-                    self.logger.info("SSL context loaded successfully")
-                
-                self.logger.info(f"Starting web server with SSL: {context is not None}")
-                app.run(
-                    host="0.0.0.0",
-                    port=port,
-                    debug=False,
-                    ssl_context=context,
-                    use_reloader=False  # Disable reloader as it causes issues with threading
-                )
+                self.logger.info("Starting in webhook mode")
+                # Run Flask server in the main thread for webhook mode
+                self.run_flask_server(app)
             else:
                 self.logger.info("Starting in polling mode")
+                # Start Flask server in a separate thread for health checks
+                self.flask_thread = threading.Thread(
+                    target=self.run_flask_server, 
+                    args=(app,), 
+                    daemon=True,
+                    name="FlaskServerThread"
+                )
+                self.flask_thread.start()
+                
                 # Start bot polling
                 self.start_polling()
-                
-                # Keep the main thread alive
-                while self.running:
-                    time.sleep(1)
 
         except KeyboardInterrupt:
             self.logger.info("Bot stopped by user")
@@ -430,6 +491,12 @@ class TelegramSecurityBot:
 def main():
     """Main entry point"""
     try:
+        # Display port information
+        port = int(os.getenv('PORT', 5000))
+        print(f"Telegram Security Bot starting on port {port}")
+        print(f"Webhook mode: {os.getenv('WEBHOOK_MODE', 'false').lower() == 'true'}")
+        print("Press Ctrl+C to stop the bot")
+        
         bot = TelegramSecurityBot()
         bot.run()
     except Exception as e:
