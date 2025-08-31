@@ -6,16 +6,12 @@ Real-time URL threat analysis using URLScan.io and Cloudflare Radar APIs
 
 import os
 import sys
-import time
 import signal
-import threading
-from typing import Optional
+import logging
 
 import telebot
 from telebot import apihelper
 from telebot.types import Message, CallbackQuery
-
-from flask import Flask, render_template  # ✅ Added Flask support
 
 # Enable middleware for the bot
 apihelper.ENABLE_MIDDLEWARE = True
@@ -63,9 +59,8 @@ class TelegramSecurityBot:
         self._setup_handlers()
         
         # Setup signal handlers for graceful shutdown
-        if sys.platform != "win32":
-            signal.signal(signal.SIGINT, self._signal_handler)
-            signal.signal(signal.SIGTERM, self._signal_handler)
+        signal.signal(signal.SIGINT, self._signal_handler)
+        signal.signal(signal.SIGTERM, self._signal_handler)
         
         self.logger.info("🤖 Telegram Security Bot initialized successfully")
 
@@ -143,75 +138,18 @@ class TelegramSecurityBot:
         self.logger.info(f"Received signal {signum}. Shutting down gracefully...")
         self.running = False
         self.bot.stop_polling()
+        self.db.close()
 
-    # ---------------- HEALTH CHECK ----------------
-    def _health_check(self):
-        """Periodic health check and restart if needed"""
-        while self.running:
-            try:
-                time.sleep(300)  # Check every 5 minutes
-                self.bot.get_me()
-                self.logger.info("🟢 Bot health check passed")
-            except Exception as e:
-                self.logger.error(f"🔴 Bot health check failed: {e}")
-                if self.running:
-                    self.logger.info("Attempting to restart bot polling...")
-                    try:
-                        self.start_polling()
-                    except Exception as restart_error:
-                        self.logger.error(f"Failed to restart bot: {restart_error}")
-
-    # ---------------- POLLING ----------------
-    def start_polling(self):
-        """Start bot polling with error recovery"""
-        max_retries = 5
-        retry_delay = 10
-        
-        for attempt in range(max_retries):
-            try:
-                self.logger.info(f"🚀 Starting bot polling (attempt {attempt+1}/{max_retries})")
-                
-                # Start health check thread
-                health_thread = threading.Thread(target=self._health_check, daemon=True)
-                health_thread.start()
-                
-                # Start polling
-                self.bot.infinity_polling(
-                    timeout=30,
-                    long_polling_timeout=30,
-                    skip_pending=True,
-                    none_stop=True
-                )
-                break
-            except Exception as e:
-                self.logger.error(f"Polling attempt {attempt+1} failed: {e}")
-                if attempt < max_retries - 1:
-                    self.logger.info(f"Retrying in {retry_delay} seconds...")
-                    time.sleep(retry_delay)
-                    retry_delay *= 2
-                else:
-                    self.logger.error("Max retries reached. Bot failed to start.")
-                    raise
-
+    # ---------------- RUN ----------------
     def run(self):
-        """Main run method"""
+        """Main run method - simple polling"""
         try:
             self.logger.info("🔐 Telegram Security Bot starting up...")
-            self.logger.info(f"🌐 Server binding to port {os.getenv('PORT', 5000)}")
-
-            # Start bot in a separate thread
-            bot_thread = threading.Thread(target=self.start_polling, daemon=True)
-            bot_thread.start()
-
-            # Start Flask web server
-            app = Flask(__name__, template_folder="templates")
-
-            @app.route("/")
-            def index():
-                return render_template("base.html")
-
-            app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)), debug=False)
-
+            self.logger.info("🤖 Bot is now running. Press Ctrl+C to stop.")
+            
+            # Start polling
+            self.bot.infinity_polling()
+            
         except KeyboardInterrupt:
             self.logger.info("Bot stopped by user")
         except Exception as e:
@@ -236,4 +174,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-        
