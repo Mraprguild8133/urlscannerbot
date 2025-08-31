@@ -1,509 +1,278 @@
 #!/usr/bin/env python3
 """
-Telegram Security Bot - Main Entry Point
-Enhanced with port configuration and better error handling
+Telegram Security Bot - Fixed Main Entry Point
+Simplified version to ensure it runs properly
 """
 
 import os
 import sys
 import time
 import signal
+import logging
 import threading
-import ssl
-import json
 from typing import Optional
-from functools import wraps
 
 import telebot
-from telebot import apihelper
 from telebot.types import Message, CallbackQuery
 
-from flask import Flask, request, render_template
+# Set up basic logging first
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+        logging.FileHandler('bot.log')
+    ]
+)
+logger = logging.getLogger(__name__)
 
-# Enable middleware for the bot
-apihelper.ENABLE_MIDDLEWARE = True
-
-from config import Config
-from database import Database
-from utils.logger import setup_logger
-from handlers.message_handler import MessageHandler
-from handlers.admin_handler import AdminHandler
-from services.url_scanner import URLScanner
-from services.cloudflare_radar import CloudflareRadar
-from services.admin_manager import AdminManager
-from services.threat_analyzer import ThreatAnalyzer
-
-
-def retry_operation(max_retries=3, delay=1, backoff=2):
-    """Decorator for retrying operations with exponential backoff"""
-    def decorator(func):
-        @wraps(func)
-        def wrapper(*args, **kwargs):
-            retries = 0
-            current_delay = delay
-            last_exception = None
-            
-            while retries < max_retries:
-                try:
-                    return func(*args, **kwargs)
-                except Exception as e:
-                    last_exception = e
-                    retries += 1
-                    if retries >= max_retries:
-                        break
-                    time.sleep(current_delay)
-                    current_delay *= backoff
-            
-            # If we've exhausted all retries, raise the last exception
-            if last_exception:
-                raise last_exception
-            else:
-                raise Exception("Operation failed after retries")
-        return wrapper
-    return decorator
-
+# Try to import other modules with error handling
+try:
+    from config import Config
+    from database import Database
+    from handlers.message_handler import MessageHandler
+    from handlers.admin_handler import AdminHandler
+    from services.url_scanner import URLScanner
+    from services.cloudflare_radar import CloudflareRadar
+    from services.admin_manager import AdminManager
+    from services.threat_analyzer import ThreatAnalyzer
+except ImportError as e:
+    logger.error(f"Import error: {e}")
+    logger.error("Please make sure all modules are properly installed and configured")
+    sys.exit(1)
 
 class TelegramSecurityBot:
-    """Main bot class that orchestrates all components"""
+    """Main bot class - simplified and fixed"""
     
     def __init__(self):
-        self.logger = setup_logger(__name__)
-        self.config = Config()
+        logger.info("🤖 Initializing Telegram Security Bot...")
+        
+        # Initialize configuration
+        try:
+            self.config = Config()
+            logger.info("✅ Configuration loaded successfully")
+        except Exception as e:
+            logger.error(f"❌ Failed to load configuration: {e}")
+            sys.exit(1)
+        
         self.running = True
         self.webhook_mode = os.getenv('WEBHOOK_MODE', 'false').lower() == 'true'
         
         # Get port from environment variable or use default
         self.port = int(os.getenv('PORT', 5000))
-        self.logger.info(f"🌐 Configured to use port: {self.port}")
-        
-        self.polling_thread = None
-        self.health_thread = None
-        self.flask_thread = None
+        logger.info(f"🌐 Using port: {self.port}")
         
         # Initialize bot
-        self.bot = telebot.TeleBot(
-            self.config.TELEGRAM_BOT_TOKEN,
-            parse_mode='HTML',
-            threaded=True,
-            num_threads=5  # Limit the number of worker threads
-        )
+        try:
+            self.bot = telebot.TeleBot(
+                self.config.TELEGRAM_BOT_TOKEN,
+                parse_mode='HTML',
+                threaded=True
+            )
+            logger.info("✅ Bot instance created successfully")
+        except Exception as e:
+            logger.error(f"❌ Failed to create bot instance: {e}")
+            sys.exit(1)
         
         # Initialize database
-        self.db = Database()
+        try:
+            self.db = Database()
+            logger.info("✅ Database initialized successfully")
+        except Exception as e:
+            logger.error(f"❌ Failed to initialize database: {e}")
+            # Continue without database if it's not critical
         
-        # Initialize services
-        self.url_scanner = URLScanner(self.config.URLSCAN_API_KEY)
-        self.cloudflare_radar = CloudflareRadar(self.config.CLOUDFLARE_API_KEY)
-        self.admin_manager = AdminManager(self.db)
-        self.threat_analyzer = ThreatAnalyzer(self.url_scanner, self.cloudflare_radar, self.db)
+        # Initialize services with error handling
+        try:
+            self.url_scanner = URLScanner(self.config.URLSCAN_API_KEY)
+            self.cloudflare_radar = CloudflareRadar(self.config.CLOUDFLARE_API_KEY)
+            self.admin_manager = AdminManager(self.db)
+            self.threat_analyzer = ThreatAnalyzer(self.url_scanner, self.cloudflare_radar, self.db)
+            logger.info("✅ Services initialized successfully")
+        except Exception as e:
+            logger.error(f"❌ Failed to initialize services: {e}")
+            # Continue with limited functionality
         
         # Initialize handlers
-        self.message_handler = MessageHandler(self.bot, self.threat_analyzer, self.admin_manager, self.db)
-        self.admin_handler = AdminHandler(self.bot, self.admin_manager, self.db)
+        try:
+            self.message_handler = MessageHandler(self.bot, self.threat_analyzer, self.admin_manager, self.db)
+            self.admin_handler = AdminHandler(self.bot, self.admin_manager, self.db)
+            logger.info("✅ Handlers initialized successfully")
+        except Exception as e:
+            logger.error(f"❌ Failed to initialize handlers: {e}")
+            sys.exit(1)
         
         # Setup bot handlers
         self._setup_handlers()
         
-        # Setup signal handlers for graceful shutdown
+        # Setup signal handlers
         self._setup_signal_handlers()
         
-        self.logger.info("🤖 Telegram Security Bot initialized successfully")
-        if self.webhook_mode:
-            self.logger.info("🌐 Webhook mode enabled")
-        else:
-            self.logger.info("🔄 Polling mode enabled")
+        logger.info("✅ Telegram Security Bot initialized successfully")
 
     def _setup_signal_handlers(self):
         """Setup signal handlers for graceful shutdown"""
-        if sys.platform != "win32":
+        if hasattr(signal, 'SIGINT'):
             signal.signal(signal.SIGINT, self._signal_handler)
+        if hasattr(signal, 'SIGTERM'):
             signal.signal(signal.SIGTERM, self._signal_handler)
-            # Add SIGHUP for restart signals
-            signal.signal(signal.SIGHUP, self._signal_handler)
+        logger.info("✅ Signal handlers set up")
 
-    # ---------------- BOT HANDLERS ----------------
     def _setup_handlers(self):
         """Setup all bot message and callback handlers"""
         
-        # Command handlers
-        @self.bot.message_handler(commands=['start'])
-        def handle_start(message: Message):
-            self.message_handler.handle_start(message)
-
-        @self.bot.message_handler(commands=['help'])
-        def handle_help(message: Message):
-            self.message_handler.handle_help(message)
+        # Basic command handlers
+        @self.bot.message_handler(commands=['start', 'help'])
+        def handle_start_help(message: Message):
+            try:
+                if message.text.startswith('/start'):
+                    self.message_handler.handle_start(message)
+                else:
+                    self.message_handler.handle_help(message)
+            except Exception as e:
+                logger.error(f"Error in start/help handler: {e}")
+                self.bot.reply_to(message, "❌ An error occurred. Please try again.")
 
         @self.bot.message_handler(commands=['scan'])
-        def handle_manual_scan(message: Message):
-            self.message_handler.handle_manual_scan(message)
+        def handle_scan(message: Message):
+            try:
+                self.message_handler.handle_manual_scan(message)
+            except Exception as e:
+                logger.error(f"Error in scan handler: {e}")
+                self.bot.reply_to(message, "❌ Scan failed. Please try again.")
 
         @self.bot.message_handler(commands=['stats'])
         def handle_stats(message: Message):
-            self.message_handler.handle_stats(message)
+            try:
+                self.message_handler.handle_stats(message)
+            except Exception as e:
+                logger.error(f"Error in stats handler: {e}")
+                self.bot.reply_to(message, "❌ Could not retrieve statistics.")
 
-        @self.bot.message_handler(commands=['settings'])
-        def handle_settings(message: Message):
-            self.message_handler.handle_settings(message)
-
-        # Admin commands
-        @self.bot.message_handler(commands=['admin'])
-        def handle_admin(message: Message):
-            self.admin_handler.handle_admin(message)
-
-        @self.bot.message_handler(commands=['addadmin'])
-        def handle_add_admin(message: Message):
-            self.admin_handler.handle_add_admin(message)
-
-        @self.bot.message_handler(commands=['removeadmin'])
-        def handle_remove_admin(message: Message):
-            self.admin_handler.handle_remove_admin(message)
-
-        @self.bot.message_handler(commands=['ban'])
-        def handle_ban(message: Message):
-            self.admin_handler.handle_ban(message)
-
-        @self.bot.message_handler(commands=['unban'])
-        def handle_unban(message: Message):
-            self.admin_handler.handle_unban(message)
-
-        @self.bot.message_handler(commands=['whitelist'])
-        def handle_whitelist(message: Message):
-            self.admin_handler.handle_whitelist(message)
-
-        @self.bot.message_handler(commands=['blacklist'])
-        def handle_blacklist(message: Message):
-            self.admin_handler.handle_blacklist(message)
-
-        @self.bot.message_handler(commands=['threshold'])
-        def handle_threshold(message: Message):
-            self.admin_handler.handle_threshold(message)
-
-        # Auto URL scanning for all text messages
+        # Auto URL scanning for text messages
         @self.bot.message_handler(func=lambda message: True, content_types=['text'])
         def handle_text(message: Message):
-            self.message_handler.handle_text_message(message)
-
-        # Callback query handlers
-        @self.bot.callback_query_handler(func=lambda call: True)
-        def handle_callback(call: CallbackQuery):
-            self.message_handler.handle_callback(call)
-
-    # ---------------- WEBHOOK SETUP ----------------
-    @retry_operation(max_retries=3, delay=2, backoff=2)
-    def setup_webhook(self, app):
-        """Setup webhook for production mode"""
-        @app.route('/webhook', methods=['POST'])
-        def webhook():
-            if request.headers.get('content-type') == 'application/json':
-                json_string = request.get_data().decode('utf-8')
-                update = telebot.types.Update.de_json(json_string)
-                self.bot.process_new_updates([update])
-                return ''
-            else:
-                return 'Invalid content type', 403
-                
-        # Set webhook URL
-        webhook_url = os.getenv('WEBHOOK_URL')
-        if not webhook_url:
-            self.logger.error("WEBHOOK_URL environment variable is required for webhook mode")
-            sys.exit(1)
-            
-        # Remove previous webhook
-        try:
-            self.bot.remove_webhook()
-            time.sleep(1)
-        except Exception as e:
-            self.logger.warning(f"Failed to remove previous webhook: {e}")
-        
-        # Set new webhook
-        try:
-            self.bot.set_webhook(
-                url=webhook_url,
-                certificate=open(os.getenv('SSL_CERT_PATH'), 'r') if os.getenv('SSL_CERT_PATH') else None,
-                timeout=60,
-                allowed_updates=["message", "callback_query"]
-            )
-            self.logger.info(f"Webhook set to: {webhook_url}")
-        except Exception as e:
-            self.logger.error(f"Failed to set webhook: {e}")
-            raise
-
-    # ---------------- FLASK SERVER SETUP ----------------
-    def setup_flask_server(self):
-        """Setup Flask server for webhook mode or health checks"""
-        app = Flask(__name__, template_folder="templates")
-
-        @app.route("/")
-        def index():
-            return render_template("base.html")
-            
-        @app.route("/health")
-        def health_check():
             try:
-                # Basic health check
-                status = {
-                    "status": "healthy", 
-                    "mode": "webhook" if self.webhook_mode else "polling",
-                    "port": self.port,
-                    "timestamp": time.time()
-                }
-                if not self.webhook_mode:
-                    bot_info = self.bot.get_me()
-                    status["bot_name"] = bot_info.first_name
-                return json.dumps(status), 200
+                self.message_handler.handle_text_message(message)
             except Exception as e:
-                return json.dumps({"status": "unhealthy", "error": str(e), "port": self.port}), 500
+                logger.error(f"Error in text message handler: {e}")
+                # Don't reply to avoid spamming users
 
-        @app.route("/info")
-        def bot_info():
-            """Endpoint to get bot information"""
-            try:
-                info = {
-                    "name": "Telegram Security Bot",
-                    "version": "1.0.0",
-                    "port": self.port,
-                    "mode": "webhook" if self.webhook_mode else "polling",
-                    "webhook_url": os.getenv('WEBHOOK_URL', 'Not set'),
-                    "uptime": time.time() - self.start_time if hasattr(self, 'start_time') else 0
-                }
-                return json.dumps(info), 200
-            except Exception as e:
-                return json.dumps({"error": str(e)}), 500
+        logger.info("✅ Bot handlers set up successfully")
 
-        # Setup webhook endpoints if in webhook mode
-        if self.webhook_mode:
-            self.setup_webhook(app)
-        
-        return app
-
-    def run_flask_server(self, app):
-        """Run Flask server in a separate thread"""
-        context = None
-        cert_path = os.getenv('SSL_CERT_PATH')
-        key_path = os.getenv('SSL_KEY_PATH')
-        
-        if cert_path and key_path and os.path.exists(cert_path) and os.path.exists(key_path):
-            context = ssl.SSLContext(ssl.PROTOCOL_TLSv1_2)
-            context.load_cert_chain(cert_path, key_path)
-            self.logger.info("SSL context loaded successfully")
-        
-        self.logger.info(f"Starting Flask server on port {self.port} with SSL: {context is not None}")
-        
-        # Run Flask app
-        app.run(
-            host="0.0.0.0",
-            port=self.port,
-            debug=False,
-            ssl_context=context,
-            use_reloader=False
-        )
-
-    # ---------------- SIGNALS ----------------
     def _signal_handler(self, signum, frame):
         """Handle shutdown signals gracefully"""
-        signal_name = {
-            signal.SIGINT: "SIGINT",
-            signal.SIGTERM: "SIGTERM",
-            signal.SIGHUP: "SIGHUP"
-        }.get(signum, f"Unknown signal ({signum})")
-        
-        self.logger.info(f"Received {signal_name}. Shutting down gracefully...")
+        logger.info(f"🛑 Received shutdown signal. Stopping bot...")
         self.running = False
-        
-        # Stop polling if active
-        if not self.webhook_mode:
-            try:
-                self.bot.stop_polling()
-            except Exception as e:
-                self.logger.error(f"Error stopping polling: {e}")
-        
-        # Remove webhook if in webhook mode
-        if self.webhook_mode:
-            try:
-                self.bot.remove_webhook()
-            except Exception as e:
-                self.logger.error(f"Error removing webhook: {e}")
-        
-        # Wait for threads to finish
-        threads_to_join = []
-        if self.polling_thread and self.polling_thread.is_alive():
-            threads_to_join.append(self.polling_thread)
-        
-        if self.health_thread and self.health_thread.is_alive():
-            threads_to_join.append(self.health_thread)
-        
-        if self.flask_thread and self.flask_thread.is_alive():
-            threads_to_join.append(self.flask_thread)
-        
-        # Join threads with timeout
-        for thread in threads_to_join:
-            thread.join(timeout=5)
-            if thread.is_alive():
-                self.logger.warning(f"Thread {thread.name} did not finish gracefully")
-        
-        # Close database connection
         try:
-            self.db.close()
-        except Exception as e:
-            self.logger.error(f"Error closing database: {e}")
-        
-        self.logger.info("Shutdown complete")
+            self.bot.stop_polling()
+        except:
+            pass
+        try:
+            if hasattr(self, 'db'):
+                self.db.close()
+        except:
+            pass
+        logger.info("✅ Bot stopped gracefully")
         sys.exit(0)
 
-    # ---------------- HEALTH CHECK ----------------
-    def _health_check(self):
-        """Periodic health check and restart if needed"""
-        check_interval = 300  # 5 minutes
-        
-        while self.running:
-            try:
-                time.sleep(check_interval)
-                
-                if not self.webhook_mode:
-                    # Check if bot is still responsive
-                    bot_info = self.bot.get_me()
-                    self.logger.info(f"🟢 Bot health check passed: {bot_info.first_name}")
-                    
-                    # Check database connection
-                    try:
-                        self.db.check_connection()
-                        self.logger.info("🟢 Database connection healthy")
-                    except Exception as e:
-                        self.logger.error(f"🔴 Database connection failed: {e}")
-                        
-            except Exception as e:
-                self.logger.error(f"🔴 Bot health check failed: {e}")
-                
-                # Attempt to restart if in polling mode and not running
-                if self.running and not self.webhook_mode:
-                    self.logger.info("Attempting to restart bot polling...")
-                    try:
-                        self._restart_polling()
-                    except Exception as restart_error:
-                        self.logger.error(f"Failed to restart bot: {restart_error}")
-
-    def _restart_polling(self):
-        """Restart the polling mechanism"""
-        if self.polling_thread and self.polling_thread.is_alive():
-            try:
-                self.bot.stop_polling()
-                self.polling_thread.join(timeout=10)
-            except Exception as e:
-                self.logger.error(f"Error stopping old polling thread: {e}")
-        
-        # Start new polling thread
-        self.polling_thread = threading.Thread(target=self._safe_polling, daemon=True, name="PollingThread")
-        self.polling_thread.start()
-        self.logger.info("Polling restarted successfully")
-
-    def _safe_polling(self):
-        """Safe polling with exception handling"""
-        max_retries = 5
-        retry_delay = 10
+    def start_polling_safe(self):
+        """Safe polling with error handling"""
+        max_retries = 3
+        retry_delay = 5
         
         for attempt in range(max_retries):
             try:
-                self.logger.info(f"🚀 Starting bot polling (attempt {attempt+1}/{max_retries})")
+                logger.info(f"🔄 Starting polling (attempt {attempt + 1}/{max_retries})")
+                
+                # Test bot connection first
+                bot_info = self.bot.get_me()
+                logger.info(f"✅ Connected to bot: @{bot_info.username}")
+                
+                # Start polling
                 self.bot.infinity_polling(
                     timeout=30,
                     long_polling_timeout=30,
                     skip_pending=True,
-                    none_stop=True,
-                    restart_on_change=True
+                    none_stop=True
                 )
                 break
+                
             except Exception as e:
-                self.logger.error(f"Polling attempt {attempt+1} failed: {e}")
-                if attempt < max_retries - 1 and self.running:
-                    self.logger.info(f"Retrying in {retry_delay} seconds...")
+                logger.error(f"❌ Polling attempt {attempt + 1} failed: {e}")
+                
+                if attempt < max_retries - 1:
+                    logger.info(f"⏳ Retrying in {retry_delay} seconds...")
                     time.sleep(retry_delay)
                     retry_delay *= 2
                 else:
-                    self.logger.error("Max retries reached. Polling failed.")
-                    if self.running:
-                        self.logger.error("Bot is no longer polling for updates.")
-                    break
-
-    # ---------------- POLLING ----------------
-    def start_polling(self):
-        """Start bot polling with error recovery"""
-        # Start health check thread
-        self.health_thread = threading.Thread(target=self._health_check, daemon=True, name="HealthCheckThread")
-        self.health_thread.start()
+                    logger.error("❌ Max retries reached. Polling failed completely.")
+                    return False
         
-        # Start polling in a separate thread
-        self.polling_thread = threading.Thread(target=self._safe_polling, daemon=True, name="PollingThread")
-        self.polling_thread.start()
-        
-        # Wait for the polling thread to complete
-        self.polling_thread.join()
+        return True
 
     def run(self):
         """Main run method"""
-        self.start_time = time.time()
+        logger.info("🚀 Starting Telegram Security Bot...")
+        
+        # Validate essential configuration
+        if not hasattr(self.config, 'TELEGRAM_BOT_TOKEN') or not self.config.TELEGRAM_BOT_TOKEN:
+            logger.error("❌ TELEGRAM_BOT_TOKEN is not set or invalid")
+            sys.exit(1)
         
         try:
-            self.logger.info("🔐 Telegram Security Bot starting up...")
+            if self.webhook_mode:
+                logger.info("🌐 Webhook mode selected")
+                # For webhook mode, you'd need to set up a web server
+                # This is simplified for now - focus on polling first
+                logger.warning("⚠️ Webhook mode not fully implemented. Using polling instead.")
             
-            # Validate essential configuration
-            if not self.config.TELEGRAM_BOT_TOKEN:
-                self.logger.error("TELEGRAM_BOT_TOKEN is not set")
+            # Start polling
+            success = self.start_polling_safe()
+            
+            if not success:
+                logger.error("❌ Failed to start polling after multiple attempts")
                 sys.exit(1)
                 
-            self.logger.info(f"🌐 Server configured for port: {self.port}")
-
-            # Setup Flask server
-            app = self.setup_flask_server()
-            
-            if self.webhook_mode:
-                self.logger.info("Starting in webhook mode")
-                # Run Flask server in the main thread for webhook mode
-                self.run_flask_server(app)
-            else:
-                self.logger.info("Starting in polling mode")
-                # Start Flask server in a separate thread for health checks
-                self.flask_thread = threading.Thread(
-                    target=self.run_flask_server, 
-                    args=(app,), 
-                    daemon=True,
-                    name="FlaskServerThread"
-                )
-                self.flask_thread.start()
-                
-                # Start bot polling
-                self.start_polling()
-
         except KeyboardInterrupt:
-            self.logger.info("Bot stopped by user")
+            logger.info("⏹️ Bot stopped by user")
         except Exception as e:
-            self.logger.error(f"Fatal error: {e}", exc_info=True)
-            raise
+            logger.error(f"💥 Fatal error: {e}", exc_info=True)
         finally:
             self.running = False
             try:
-                self.db.close()
-            except Exception as e:
-                self.logger.error(f"Error closing database: {e}")
-            self.logger.info("🛑 Bot shutdown complete")
-
+                if hasattr(self, 'db'):
+                    self.db.close()
+            except:
+                pass
+            logger.info("🛑 Bot shutdown complete")
 
 def main():
     """Main entry point"""
     try:
-        # Display port information
-        port = int(os.getenv('PORT', 5000))
-        print(f"Telegram Security Bot starting on port {port}")
-        print(f"Webhook mode: {os.getenv('WEBHOOK_MODE', 'false').lower() == 'true'}")
-        print("Press Ctrl+C to stop the bot")
+        print("=" * 50)
+        print("Telegram Security Bot - Starting Up")
+        print("=" * 50)
         
+        # Display basic info
+        port = int(os.getenv('PORT', 5000))
+        webhook_mode = os.getenv('WEBHOOK_MODE', 'false').lower() == 'true'
+        
+        print(f"Port: {port}")
+        print(f"Webhook mode: {webhook_mode}")
+        print("Check bot.log for detailed logs")
+        print("Press Ctrl+C to stop the bot")
+        print("=" * 50)
+        
+        # Create and run bot
         bot = TelegramSecurityBot()
         bot.run()
+        
     except Exception as e:
-        logger = setup_logger(__name__)
-        logger.error(f"Failed to start bot: {e}", exc_info=True)
+        logger.error(f"💥 Failed to start bot: {e}", exc_info=True)
+        print(f"Error: {e}")
+        print("Check bot.log for details")
         sys.exit(1)
-
 
 if __name__ == "__main__":
     main()
