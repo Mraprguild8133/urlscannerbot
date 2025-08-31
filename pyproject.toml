@@ -11,5 +11,5 @@ dependencies = [
      "pyTelegramBotAPI>=4.28.0",
          "flask>=3.1.1",
          "watchdog>=6.0.0",
-         
+         "psutil",
 ]
