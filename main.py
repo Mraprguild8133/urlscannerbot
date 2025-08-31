@@ -14,6 +14,7 @@ from typing import Optional
 import telebot
 from telebot import apihelper
 from telebot.types import Message, CallbackQuery
+from flask import Flask, render_template
 
 # Enable middleware for the bot
 apihelper.ENABLE_MIDDLEWARE = True
@@ -159,7 +160,7 @@ class TelegramSecurityBot:
                 self.logger.info("🟢 Bot health check passed")
             except Exception as e:
                 self.logger.error(f"🔴 Bot health check failed: {e}")
-                # just log, don’t auto-restart to avoid thread explosion
+                # Only log; don’t auto-restart to avoid thread explosion
 
     # ---------------- POLLING ----------------
     def start_polling(self):
@@ -197,7 +198,20 @@ class TelegramSecurityBot:
         """Main run method"""
         try:
             self.logger.info("🔐 Telegram Security Bot starting up...")
-            self.start_polling()
+
+            # Start bot in a separate thread (polling only)
+            bot_thread = threading.Thread(target=self.start_polling, daemon=True)
+            bot_thread.start()
+
+            # Flask app for status page
+            app = Flask(__name__, template_folder="templates")
+
+            @app.route("/")
+            def index():
+                return render_template("base.html", status=self.running)
+
+            app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)), debug=False)
+
         except KeyboardInterrupt:
             self.logger.info("Bot stopped by user")
         except Exception as e:
@@ -222,4 +236,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-        
+                            
