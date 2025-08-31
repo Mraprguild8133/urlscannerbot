@@ -175,9 +175,10 @@ class TelegramSecurityBot:
                 # ✅ Always remove webhook before polling
                 self.bot.remove_webhook()
 
-                # Start health check thread
-                health_thread = threading.Thread(target=self._health_check, daemon=True)
-                health_thread.start()
+                # Start health check thread (only once)
+                if attempt == 0:
+                    health_thread = threading.Thread(target=self._health_check, daemon=True)
+                    health_thread.start()
 
                 # Start polling
                 self.bot.infinity_polling(
@@ -185,9 +186,21 @@ class TelegramSecurityBot:
                     long_polling_timeout=30,
                     skip_pending=True
                 )
-                break
+                break  # Exit loop if polling starts successfully
+
             except Exception as e:
-                self.logger.error(f"Polling attempt {attempt+1} failed: {e}")
+                err_msg = str(e)
+                self.logger.error(f"Polling attempt {attempt+1} failed: {err_msg}")
+
+                # ✅ Specific fix: Stop immediately on 409 conflict
+                if "Conflict: terminated by other getUpdates request" in err_msg:
+                    self.logger.error(
+                        "❌ Another instance of this bot is already running.\n"
+                        "Stop duplicate processes or clear webhook with:\n"
+                        f"curl -s 'https://api.telegram.org/bot{self.config.TELEGRAM_BOT_TOKEN}/deleteWebhook'"
+                    )
+                    sys.exit(1)
+
                 if attempt < max_retries - 1:
                     self.logger.info(f"Retrying in {retry_delay} seconds...")
                     time.sleep(retry_delay)
@@ -253,4 +266,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-        
+    
